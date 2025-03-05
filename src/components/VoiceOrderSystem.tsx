@@ -40,6 +40,7 @@ const VoiceOrderSystem = () => {
   const [audioElement, setAudioElement] = useState<HTMLAudioElement | null>(
     null
   );
+  const [ephemeralKey, setEphemeralKey] = useState<string | null>(null);
 
   // Order state
   const [order, setOrder] = useState<OrderState>({
@@ -78,12 +79,11 @@ const VoiceOrderSystem = () => {
       });
 
       // Set up data channel for sending/receiving JSON messages
-      const channel = pc.createDataChannel("events");
+      const channel = pc.createDataChannel("oai-events");
       channel.onmessage = handleChannelMessage;
       channel.onopen = () => {
         console.log("Data channel is open");
-        // Initialize the session once the channel is open
-        initializeSession(channel);
+        // The session is already initialized by the OpenAI API
       };
 
       // Set up audio element for playing model responses
@@ -91,10 +91,18 @@ const VoiceOrderSystem = () => {
       audioEl.autoplay = true;
       setAudioElement(audioEl);
 
+      // Request access to the microphone and add the audio track to the peer connection
+      const mediaStream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+      });
+      mediaStream.getAudioTracks().forEach((track) => {
+        pc.addTrack(track, mediaStream);
+      });
+
       // Handle incoming audio stream from the model
       pc.ontrack = (event) => {
         console.log("Received remote track", event);
-        if (audioEl) {
+        if (audioEl && event.streams[0]) {
           audioEl.srcObject = event.streams[0];
         }
       };
@@ -103,18 +111,39 @@ const VoiceOrderSystem = () => {
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
 
+      // Ensure that the local description is set before proceeding
+      await new Promise<void>((resolve) => {
+        if (pc.localDescription) {
+          resolve();
+        } else {
+          pc.addEventListener("icecandidate", () => {
+            if (pc.localDescription) resolve();
+          });
+        }
+      });
+
       // Send the offer to your server, which will forward it to OpenAI
-      // This is a simplified example - you would need a server endpoint to handle this
       const response = await fetch("/api/realtime/session", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ offer: pc.localDescription }),
       });
 
-      const { answer } = await response.json();
+      const data = await response.json();
+
+      if (!data.answer || !data.answer.sdp) {
+        throw new Error("Invalid response from server: missing SDP answer");
+      }
+
+      console.log("Received answer:", data);
+
+      // Store ephemeral key for later use
+      if (data.ephemeralKey) {
+        setEphemeralKey(data.ephemeralKey);
+      }
 
       // Set the remote description with the answer from OpenAI
-      await pc.setRemoteDescription(new RTCSessionDescription(answer));
+      await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
 
       // Store the connection and data channel
       setConnection(pc);
@@ -129,40 +158,6 @@ const VoiceOrderSystem = () => {
     }
   };
 
-  // Initialize the session with OpenAI Realtime API
-  const initializeSession = (channel: RTCDataChannel) => {
-    const systemPrompt = `
-      You are a helpful order-taking assistant for OpenInfo Foodservice. 
-      Follow this pattern for taking orders:
-      
-      1. First, ask for the customer name or account code with: "Hi, you've reached orders at OpenInfo Foodservice, where are you calling from today?"
-      2. Once you have the customer information, ask for the delivery date with: "When would you like this delivered for?"
-      3. Confirm the date in a clear format, like "So that's Wednesday 12th March".
-      4. Ask for products they want to order with: "And what would you like?"
-      5. After they list products, summarize the order and confirm with: "Great, order received - we'll let you know once this is confirmed by the team and send a confirmation to this number and the email address we have on record. Have a nice day!"
-      
-      Keep responses concise and professional. Extract customer name, account code (if provided), delivery date, and product information throughout the conversation.
-    `;
-
-    const event = {
-      type: "session.update",
-      session: {
-        instructions: systemPrompt,
-        voice: "nova",
-      },
-    };
-
-    channel.send(JSON.stringify(event));
-
-    // Add a slight delay before sending first message to start the conversation
-    setTimeout(() => {
-      const startEvent = {
-        type: "response.create",
-      };
-      channel.send(JSON.stringify(startEvent));
-    }, 1000);
-  };
-
   // Handle messages from the data channel
   const handleChannelMessage = (event: MessageEvent) => {
     try {
@@ -170,6 +165,8 @@ const VoiceOrderSystem = () => {
 
       // Store message for debugging
       messagesRef.current.push({ type: "received", content: serverEvent });
+
+      console.log("Received event from server:", serverEvent);
 
       // Handle different event types
       switch (serverEvent.type) {
@@ -179,17 +176,18 @@ const VoiceOrderSystem = () => {
 
         case "response.created":
           console.log("Response started");
+          setAssistantResponse(""); // Clear previous response when a new one starts
           break;
 
         case "response.text.delta":
           // Append text delta to the transcript
-          setAssistantResponse((prev) => prev + serverEvent.delta.text);
+          setAssistantResponse((prev) => prev + (serverEvent.delta.text || ""));
           break;
 
         case "response.done":
           console.log("Response complete");
           // Extract information from the response to update order state
-          updateOrderFromResponse(serverEvent.response.output[0]?.text || "");
+          updateOrderFromResponse(serverEvent.response.output?.[0]?.text || "");
           break;
 
         case "input_audio_buffer.speech_started":
@@ -202,6 +200,10 @@ const VoiceOrderSystem = () => {
           setIsListening(false);
           break;
 
+        case "error":
+          console.error("Error from OpenAI:", serverEvent);
+          break;
+
         default:
           // Other event types can be handled as needed
           break;
@@ -210,6 +212,54 @@ const VoiceOrderSystem = () => {
       console.error("Error handling channel message:", error);
     }
   };
+
+  // Function to start the conversation once connected
+  const startConversation = () => {
+    if (dataChannel && dataChannel.readyState === "open") {
+      // Set the system instructions
+      const systemPrompt = `
+        You are a helpful order-taking assistant for OpenInfo Foodservice. 
+        Follow this pattern for taking orders:
+        
+        1. First, ask for the customer name or account code with: "Hi, you've reached orders at OpenInfo Foodservice, where are you calling from today?"
+        2. Once you have the customer information, ask for the delivery date with: "When would you like this delivered for?"
+        3. Confirm the date in a clear format, like "So that's Wednesday 12th March".
+        4. Ask for products they want to order with: "And what would you like?"
+        5. After they list products, summarize the order and confirm with: "Great, order received - we'll let you know once this is confirmed by the team and send a confirmation to this number and the email address we have on record. Have a nice day!"
+        
+        Keep responses concise and professional. Extract customer name, account code (if provided), delivery date, and product information throughout the conversation.
+      `;
+
+      // Update the session with our system instructions
+      const sessionUpdateEvent = {
+        type: "session.update",
+        session: {
+          instructions: systemPrompt,
+        },
+      };
+
+      console.log("Sending session update:", sessionUpdateEvent);
+      dataChannel.send(JSON.stringify(sessionUpdateEvent));
+
+      // Wait a moment for the session update to take effect
+      setTimeout(() => {
+        // Create an initial response to start the conversation
+        const responseCreateEvent = {
+          type: "response.create",
+        };
+
+        console.log("Sending response create:", responseCreateEvent);
+        dataChannel.send(JSON.stringify(responseCreateEvent));
+      }, 1000);
+    }
+  };
+
+  // Effect to initialize the conversation once data channel is set
+  useEffect(() => {
+    if (dataChannel && dataChannel.readyState === "open") {
+      startConversation();
+    }
+  }, [dataChannel]);
 
   // Update order state based on assistant's response
   const updateOrderFromResponse = (text: string) => {
@@ -241,8 +291,34 @@ const VoiceOrderSystem = () => {
       }
     }
 
+    // Check for product mentions
+    else if (order.currentStep === "products") {
+      // Very simple product extraction - a real implementation would be more robust
+      const productMatches = text.match(
+        /(\d+)\s+(box(?:es)?|of)\s+([\w\s]+)/gi
+      );
+      if (productMatches) {
+        const extractedProducts = productMatches
+          .map((match) => {
+            const parts = match.match(/(\d+)\s+(box(?:es)?|of)\s+([\w\s]+)/i);
+            if (parts && parts.length >= 4) {
+              return {
+                quantity: parseInt(parts[1], 10),
+                name: parts[3].trim(),
+              };
+            }
+            return null;
+          })
+          .filter(Boolean) as Array<{ name: string; quantity: number }>;
+
+        if (extractedProducts.length > 0) {
+          newOrder.products = [...newOrder.products, ...extractedProducts];
+        }
+      }
+    }
+
     // Check for order confirmation
-    else if (text.includes("order received") || text.includes("confirmation")) {
+    if (text.includes("order received") || text.includes("confirmation")) {
       newOrder.currentStep = "confirmation";
       newOrder.confirmed = true;
     }
@@ -270,6 +346,7 @@ const VoiceOrderSystem = () => {
         },
       };
 
+      console.log("Sending user message:", event);
       dataChannel.send(JSON.stringify(event));
 
       const responseEvent = {
@@ -341,7 +418,6 @@ const VoiceOrderSystem = () => {
             Follow the prompts to complete your food service order
           </CardDescription>
         </CardHeader>
-
         <div className="px-6 py-3 bg-gray-50 dark:bg-gray-800">
           <div className="flex justify-between">
             {steps.map((step, index) => (
@@ -374,42 +450,55 @@ const VoiceOrderSystem = () => {
         <CardContent className="pt-6">
           <div className="space-y-4">
             <div className="border rounded-md p-4 bg-gray-50 dark:bg-gray-900 min-h-40 max-h-60 overflow-y-auto">
-              {assistantResponse ? (
-                <div className="mb-4">
-                  <p className="text-sm font-medium text-gray-500 mb-1">
-                    Assistant
-                  </p>
-                  <div className="bg-blue-100 dark:bg-blue-900/30 p-3 rounded-lg text-gray-800 dark:text-gray-200">
-                    {assistantResponse}
-                  </div>
+              <div className="flex flex-col space-y-4">
+                {/* Conversation Transcript Section */}
+                <div className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Conversation Transcript:
                 </div>
-              ) : connection ? (
-                <div className="flex items-center justify-center h-32">
-                  {isListening ? (
-                    <div className="flex flex-col items-center space-y-2">
-                      <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
-                      <span className="text-sm text-blue-500">
-                        Listening...
-                      </span>
-                    </div>
-                  ) : (
-                    <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
-                  )}
-                </div>
-              ) : (
-                <div className="flex items-center justify-center h-32 text-gray-500">
-                  Click &quot;Start Order&quot; to begin
-                </div>
-              )}
 
-              {transcript && (
-                <div className="mt-4">
-                  <p className="text-sm font-medium text-gray-500 mb-1">You</p>
-                  <div className="bg-gray-200 dark:bg-gray-800 p-3 rounded-lg text-gray-800 dark:text-gray-200">
-                    {transcript}
+                {/* Always display this section when a connection exists */}
+                {connection ? (
+                  <div className="flex flex-col space-y-3">
+                    {assistantResponse && (
+                      <div className="mb-2">
+                        <div className="text-xs text-gray-500 mb-1">
+                          Assistant:
+                        </div>
+                        <div className="bg-blue-100 dark:bg-blue-900/30 p-2 rounded-lg text-gray-800 dark:text-gray-200">
+                          {assistantResponse}
+                        </div>
+                      </div>
+                    )}
+
+                    {transcript && (
+                      <div className="mb-2">
+                        <div className="text-xs text-gray-500 mb-1">You:</div>
+                        <div className="bg-green-100 dark:bg-green-900/30 p-2 rounded-lg text-gray-800 dark:text-gray-200">
+                          {transcript}
+                        </div>
+                      </div>
+                    )}
+
+                    {isListening && (
+                      <div className="flex items-center text-blue-500">
+                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                        <span className="text-sm">Listening...</span>
+                      </div>
+                    )}
+
+                    {!assistantResponse && !transcript && !isListening && (
+                      <div className="text-gray-500 italic text-sm">
+                        When you speak or the assistant responds, the transcript
+                        will appear here.
+                      </div>
+                    )}
                   </div>
-                </div>
-              )}
+                ) : (
+                  <div className="flex items-center justify-center h-24 text-gray-500">
+                    Click "Start Order" to begin the conversation
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-4">
@@ -448,7 +537,6 @@ const VoiceOrderSystem = () => {
             </div>
           </div>
         </CardContent>
-
         <CardFooter className="border-t pt-4 pb-4 flex justify-between">
           {order.confirmed ? (
             <Badge className="px-3 py-1 bg-green-500 text-white">

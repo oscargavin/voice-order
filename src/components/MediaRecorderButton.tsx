@@ -1,33 +1,36 @@
 "use client";
 
-import React from "react";
-import { useReactMediaRecorder } from "react-media-recorder";
+import React, { useState, useEffect } from "react";
 import { Mic, MicOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
-interface MediaRecorderProps {
-  onRecordingChange: (isRecording: boolean) => void;
-}
-
-export const MediaRecorderButton: React.FC<MediaRecorderProps> = ({
+// Client-side only recorder component
+const ClientMediaRecorder = ({
   onRecordingChange,
+}: {
+  onRecordingChange: (isRecording: boolean) => void;
 }) => {
+  // Import the hook directly here - this component only runs on client
+  const { useReactMediaRecorder } = require("react-media-recorder");
+
   const { status, startRecording, stopRecording } = useReactMediaRecorder({
     audio: true,
     blobPropertyBag: { type: "audio/webm" },
   });
 
+  const handleClick = () => {
+    if (status === "recording") {
+      stopRecording();
+      onRecordingChange(false);
+    } else {
+      startRecording();
+      onRecordingChange(true);
+    }
+  };
+
   return (
     <Button
-      onClick={() => {
-        if (status === "recording") {
-          stopRecording();
-          onRecordingChange(false);
-        } else {
-          startRecording();
-          onRecordingChange(true);
-        }
-      }}
+      onClick={handleClick}
       variant={status === "recording" ? "destructive" : "default"}
       className={
         status === "recording"
@@ -48,4 +51,31 @@ export const MediaRecorderButton: React.FC<MediaRecorderProps> = ({
       )}
     </Button>
   );
+};
+
+interface MediaRecorderProps {
+  onRecordingChange: (isRecording: boolean) => void;
+}
+
+export const MediaRecorderButton: React.FC<MediaRecorderProps> = ({
+  onRecordingChange,
+}) => {
+  const [isMounted, setIsMounted] = useState(false);
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
+
+  if (!isMounted) {
+    // Return a placeholder button while on server or before mounting
+    return (
+      <Button disabled className="bg-green-600 hover:bg-green-700">
+        <Mic className="mr-2 h-4 w-4" />
+        Loading...
+      </Button>
+    );
+  }
+
+  // Only render the actual recorder component on the client after mounting
+  return <ClientMediaRecorder onRecordingChange={onRecordingChange} />;
 };
