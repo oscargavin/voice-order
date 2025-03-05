@@ -13,16 +13,22 @@ const ClientMediaRecorder = ({
   // Import the hook directly here - this component only runs on client
   const { useReactMediaRecorder } = require("react-media-recorder");
 
-  const { status, startRecording, stopRecording } = useReactMediaRecorder({
-    audio: true,
-    blobPropertyBag: { type: "audio/webm" },
-  });
-
+  const { status, startRecording, stopRecording, mediaBlobUrl } =
+    useReactMediaRecorder({
+      audio: true,
+      blobPropertyBag: { type: "audio/webm" },
+      onStop: (blobUrl: any, blob: { size: any }) => {
+        console.log("Recording stopped, blob URL:", blobUrl);
+        console.log("Blob size:", blob?.size);
+      },
+    });
   const handleClick = () => {
     if (status === "recording") {
+      console.log("Stopping recording");
       stopRecording();
       onRecordingChange(false);
     } else {
+      console.log("Starting recording");
       startRecording();
       onRecordingChange(true);
     }
