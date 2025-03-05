@@ -59,9 +59,9 @@ const VoiceOrderSystem = () => {
     confirmed: false,
   });
 
-  // Reference to store messages for debugging
-  const messagesRef = useRef<
-    Array<{ type: string; content: Record<string, unknown> }>
+  // Reference to store conversation history
+  const conversationHistoryRef = useRef<
+    Array<{ role: "assistant" | "user"; content: string }>
   >([]);
 
   // Initialize WebRTC connection
@@ -171,6 +171,23 @@ const VoiceOrderSystem = () => {
 
       // Update order state to the first step
       setOrder((prev) => ({ ...prev, currentStep: "customer" }));
+
+      // If we've set the system prompt in the API, we don't need to set it again
+      // but we still need to trigger the assistant to start speaking
+      // We'll wait a moment for the connection to stabilize
+      if (data.systemPrompt && channel.readyState === "open") {
+        setTimeout(() => {
+          console.log("Sending initial message to trigger assistant greeting");
+          // Just create a response request to get the assistant to start speaking
+          const responseCreateEvent = {
+            type: "response.create",
+            response: {
+              modalities: ["text", "audio"],
+            },
+          };
+          channel.send(JSON.stringify(responseCreateEvent));
+        }, 2000);
+      }
     } catch (error) {
       console.error("Error initializing connection:", error);
       setIsConnecting(false);
@@ -182,9 +199,6 @@ const VoiceOrderSystem = () => {
     try {
       const serverEvent = JSON.parse(event.data);
       console.log("Received event from server:", serverEvent);
-
-      // Store message for debugging
-      messagesRef.current.push({ type: "received", content: serverEvent });
 
       // Handle different event types
       switch (serverEvent.type) {
@@ -219,6 +233,15 @@ const VoiceOrderSystem = () => {
         case "response.done":
           console.log("Response complete");
           setIsAssistantSpeaking(false);
+
+          // Store assistant response in conversation history
+          if (assistantResponse) {
+            conversationHistoryRef.current.push({
+              role: "assistant",
+              content: assistantResponse,
+            });
+          }
+
           // Extract information from the response to update order state
           updateOrderFromResponse(assistantResponse);
           break;
@@ -239,7 +262,14 @@ const VoiceOrderSystem = () => {
             serverEvent.item?.role === "user" &&
             serverEvent.item?.content?.[0]?.type === "text"
           ) {
-            setTranscript(serverEvent.item.content[0].text);
+            const userText = serverEvent.item.content[0].text;
+            setTranscript(userText);
+
+            // Store user message in conversation history
+            conversationHistoryRef.current.push({
+              role: "user",
+              content: userText,
+            });
           }
           break;
 
@@ -259,19 +289,31 @@ const VoiceOrderSystem = () => {
   // Function to start the conversation once connected
   const startConversation = () => {
     if (dataChannel && dataChannel.readyState === "open") {
-      // Set the system instructions
+      // Set the system instructions to follow the exact waterfall approach
       const systemPrompt = `
-      You are a helpful order-taking assistant for OpenInfo Foodservice. 
-      Follow this pattern for taking orders:
+      You are an order-taking assistant for OpenInfo Foodservice. 
+      Follow this EXACT waterfall approach for taking orders:
     
-      1. First, ask for the customer name or account code with: &quot;Hi, you've reached orders at OpenInfo Foodservice, where are you calling from today?&quot;
-      2. Once you have the customer information, ask for the delivery date with: &quot;When would you like this delivered for?&quot;
-      3. Confirm the date in a clear format, like &quot;So that's Wednesday 12th March&quot;.
-      4. Ask for products they want to order with: &quot;And what would you like?&quot;
-      5. After they list products, summarize the order and confirm with: &quot;Great, order received - we'll let you know once this is confirmed by the team and send a confirmation to this number and the email address we have on record. Have a nice day!&quot;
+      1. Start by asking for customer name or account code with EXACTLY:
+         "Hi, you've reached orders at OpenInfo Foodservice, where are you calling from today?"
       
-      Keep responses concise and professional. Extract customer name, account code (if provided), delivery date, and product information throughout the conversation.
-    `;
+      2. Once you have the customer name/account code, ask about delivery date with EXACTLY:
+         "When would you like this delivered for?"
+      
+      3. Confirm the date in format like:
+         "So that's Wednesday 12th March"
+      
+      4. Ask for products with EXACTLY:
+         "And what would you like?"
+      
+      5. After they list products, end with EXACTLY:
+         "Great, order received - we'll let you know once this is confirmed by the team and send a confirmation to this number and the email address we have on record. Have a nice day!"
+      
+      IMPORTANT: You must begin the conversation immediately with the exact greeting without waiting for the user to speak first.
+      Do not deviate from this script or allow the conversation to go off-track.
+      Extract customer name, account code (if provided), delivery date, and product information carefully.
+      Keep responses concise and professional.
+      `;
 
       // Update the session with our system instructions and voice settings
       const sessionUpdateEvent = {
@@ -290,17 +332,37 @@ const VoiceOrderSystem = () => {
 
       // Wait a moment for the session update to take effect
       setTimeout(() => {
-        // Create an initial response to start the conversation
-        const responseCreateEvent = {
-          type: "response.create",
-          response: {
-            // Ensure both text and audio in the response
-            modalities: ["text", "audio"],
+        // Create an initial message to explicitly start the conversation
+        const initialMessageEvent = {
+          type: "conversation.item.create",
+          item: {
+            type: "message",
+            role: "user",
+            content: [
+              {
+                type: "input_text",
+                text: "start order process",
+              },
+            ],
           },
         };
 
-        console.log("Sending response create:", responseCreateEvent);
-        dataChannel.send(JSON.stringify(responseCreateEvent));
+        console.log("Sending initial message:", initialMessageEvent);
+        dataChannel.send(JSON.stringify(initialMessageEvent));
+
+        // Then create a response to get the assistant to speak
+        setTimeout(() => {
+          const responseCreateEvent = {
+            type: "response.create",
+            response: {
+              // Ensure both text and audio in the response
+              modalities: ["text", "audio"],
+            },
+          };
+
+          console.log("Sending response create:", responseCreateEvent);
+          dataChannel.send(JSON.stringify(responseCreateEvent));
+        }, 500);
       }, 1000);
     }
   };
@@ -308,7 +370,14 @@ const VoiceOrderSystem = () => {
   // Effect to initialize the conversation once data channel is set
   useEffect(() => {
     if (dataChannel && dataChannel.readyState === "open") {
+      console.log("Data channel is open, starting conversation...");
       startConversation();
+
+      // Add event listener for data channel state changes
+      dataChannel.onopen = () => {
+        console.log("Data channel opened or reopened");
+        startConversation();
+      };
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataChannel]);
@@ -347,66 +416,158 @@ const VoiceOrderSystem = () => {
     }
   };
 
-  // Update order state based on assistant's response
+  // Advanced parsing function for product extraction
+  const extractProducts = (
+    text: string
+  ): Array<{ name: string; quantity: number }> => {
+    // Look for patterns like "2 boxes of tomatoes", "5 cases of oranges", etc.
+    const productRegex =
+      /(\d+)\s+(?:box(?:es)?|case(?:s)?|pack(?:s)?|of)\s+([\w\s]+?)(?:,|\.|$)/gi;
+    const matches = [...text.matchAll(productRegex)];
+
+    return matches
+      .map((match) => {
+        const quantity = parseInt(match[1], 10);
+        // Clean up the product name by removing trailing spaces and punctuation
+        const name = match[2].trim().replace(/[,.;]$/, "");
+        return { name, quantity };
+      })
+      .filter((product) => product.name && !isNaN(product.quantity));
+  };
+
+  // Update order state based on assistant's response and user input
   const updateOrderFromResponse = (text: string) => {
-    // This is a simplified implementation - a more robust version would use
-    // function calling or more advanced parsing techniques
-
     const newOrder = { ...order };
+    const fullConversation = conversationHistoryRef.current;
 
-    // Try to extract customer information
+    console.log("Updating order from response:", text);
+    console.log("Current step:", order.currentStep);
+    console.log("Conversation history:", fullConversation);
+
+    // Check if this is the initial greeting from the assistant
+    if (
+      text.includes("Hi, you've reached orders at OpenInfo Foodservice") &&
+      order.currentStep === "customer"
+    ) {
+      console.log("Detected initial greeting - waiting for customer info");
+      // No action needed - just detected the initial greeting
+    }
+
+    // Step 1: Extract customer information during customer step
     if (order.currentStep === "customer" && order.customer === "") {
-      // Simple extraction looking for common patterns
-      const customerMatch = text.match(/calling from ([\w\s&]+)/i);
-      if (customerMatch && customerMatch[1]) {
-        newOrder.customer = customerMatch[1].trim();
+      // Find the last user message after being asked about customer/account info
+      const askCustomerIndex = fullConversation.findIndex(
+        (msg) =>
+          msg.role === "assistant" &&
+          msg.content.includes("where are you calling from today")
+      );
+
+      if (
+        askCustomerIndex >= 0 &&
+        askCustomerIndex < fullConversation.length - 1
+      ) {
+        const userResponse = fullConversation.find(
+          (msg, idx) =>
+            idx > askCustomerIndex &&
+            msg.role === "user" &&
+            msg.content !== "start order process"
+        );
+
+        if (userResponse) {
+          // Use the user's entire response as the customer name
+          newOrder.customer = userResponse.content.trim();
+          newOrder.currentStep = "deliveryDate";
+          console.log("Extracted customer:", newOrder.customer);
+        }
+      }
+
+      // Also check if the assistant has moved on to asking about delivery date
+      if (text.includes("When would you like this delivered")) {
         newOrder.currentStep = "deliveryDate";
+        console.log(
+          "Assistant asking about delivery date - moving to next step"
+        );
       }
     }
 
-    // Try to extract delivery date
+    // Step 2: Extract delivery date
     else if (
       order.currentStep === "deliveryDate" &&
       order.deliveryDate === ""
     ) {
-      // Look for date confirmation patterns
-      const dateMatch = text.match(/that's ([\w\s\d]+)(\.|\?)/i);
-      if (dateMatch && dateMatch[1]) {
-        newOrder.deliveryDate = dateMatch[1].trim();
-        newOrder.currentStep = "products";
-      }
-    }
+      // Check if the current assistant response is confirming a date
+      if (text.includes("So that's")) {
+        // Extract the date from the confirmation message
+        const dateMatch = text.match(/So that's ([\w\s\d]+)(\.|\?|$)/i);
+        if (dateMatch && dateMatch[1]) {
+          newOrder.deliveryDate = dateMatch[1].trim();
+          newOrder.currentStep = "products";
+          console.log(
+            "Extracted delivery date from confirmation:",
+            newOrder.deliveryDate
+          );
+        }
+      } else {
+        // Look through conversation history for date confirmation
+        const dateConfirmIndex = fullConversation.findIndex(
+          (msg) => msg.role === "assistant" && msg.content.includes("So that's")
+        );
 
-    // Check for product mentions
-    else if (order.currentStep === "products") {
-      // Very simple product extraction - a real implementation would be more robust
-      const productMatches = text.match(
-        /(\d+)\s+(box(?:es)?|of)\s+([\w\s]+)/gi
-      );
-      if (productMatches) {
-        const extractedProducts = productMatches
-          .map((match) => {
-            const parts = match.match(/(\d+)\s+(box(?:es)?|of)\s+([\w\s]+)/i);
-            if (parts && parts.length >= 4) {
-              return {
-                quantity: parseInt(parts[1], 10),
-                name: parts[3].trim(),
-              };
-            }
-            return null;
-          })
-          .filter(Boolean) as Array<{ name: string; quantity: number }>;
+        if (dateConfirmIndex >= 0) {
+          const dateMsg = fullConversation[dateConfirmIndex];
+          const dateMatch = dateMsg.content.match(
+            /So that's ([\w\s\d]+)(\.|\?|$)/i
+          );
+          if (dateMatch && dateMatch[1]) {
+            newOrder.deliveryDate = dateMatch[1].trim();
+            newOrder.currentStep = "products";
+            console.log(
+              "Extracted delivery date from history:",
+              newOrder.deliveryDate
+            );
+          }
+        }
 
-        if (extractedProducts.length > 0) {
-          newOrder.products = [...newOrder.products, ...extractedProducts];
+        // Check if we've moved on to asking about products
+        if (text.includes("And what would you like")) {
+          newOrder.currentStep = "products";
+          console.log("Assistant asking about products - moving to next step");
         }
       }
     }
 
-    // Check for order confirmation
+    // Step 3: Extract products mentioned by the user
+    else if (order.currentStep === "products") {
+      // Find messages after asking "And what would you like?"
+      const askProductIndex = fullConversation.findIndex(
+        (msg) =>
+          msg.role === "assistant" &&
+          msg.content.includes("And what would you like")
+      );
+
+      if (askProductIndex >= 0) {
+        // Collect all user responses after the product question
+        const userResponses = fullConversation.filter(
+          (msg, idx) => idx > askProductIndex && msg.role === "user"
+        );
+
+        // Extract products from all user responses
+        const allProducts = userResponses.flatMap((msg) =>
+          extractProducts(msg.content)
+        );
+
+        if (allProducts.length > 0) {
+          newOrder.products = allProducts;
+          console.log("Extracted products:", allProducts);
+        }
+      }
+    }
+
+    // Step 4: Check for order confirmation
     if (text.includes("order received") || text.includes("confirmation")) {
       newOrder.currentStep = "confirmation";
       newOrder.confirmed = true;
+      console.log("Order confirmed");
     }
 
     // Update the order state
@@ -434,6 +595,12 @@ const VoiceOrderSystem = () => {
 
       console.log("Sending user message:", event);
       dataChannel.send(JSON.stringify(event));
+
+      // Store user message in conversation history
+      conversationHistoryRef.current.push({
+        role: "user",
+        content: text,
+      });
 
       const responseEvent = {
         type: "response.create",
@@ -683,7 +850,13 @@ const VoiceOrderSystem = () => {
             </Badge>
           ) : (
             <span className="text-sm text-gray-500">
-              {connection
+              {order.currentStep === "customer"
+                ? "Tell us your name or account code"
+                : order.currentStep === "deliveryDate"
+                ? "Tell us your preferred delivery date"
+                : order.currentStep === "products"
+                ? "Let us know which products you'd like to order"
+                : connection
                 ? "Speak clearly into your microphone"
                 : "Start the order process to begin"}
             </span>

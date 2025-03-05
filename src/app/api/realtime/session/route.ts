@@ -14,8 +14,33 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Define the exact system prompt to use
+    const systemPrompt = `
+    You are an order-taking assistant for OpenInfo Foodservice. 
+    Follow this EXACT waterfall approach for taking orders:
+  
+    1. Start IMMEDIATELY by asking for customer name or account code with EXACTLY:
+       "Hi, you've reached orders at OpenInfo Foodservice, where are you calling from today?"
+    
+    2. Once you have the customer name/account code, ask about delivery date with EXACTLY:
+       "When would you like this delivered for?"
+    
+    3. Confirm the date in format like:
+       "So that's Wednesday 12th March"
+    
+    4. Ask for products with EXACTLY:
+       "And what would you like?"
+    
+    5. After they list products, end with EXACTLY:
+       "Great, order received - we'll let you know once this is confirmed by the team and send a confirmation to this number and the email address we have on record. Have a nice day!"
+    
+    YOU MUST BEGIN THE CONVERSATION IMMEDIATELY with the exact greeting above. 
+    Do not wait for the user to speak first.
+    Do not deviate from this script.
+    Keep responses concise and professional.
+    `;
+
     // First, create an ephemeral token using the OpenAI API
-    // Since the SDK doesn't have direct Realtime API support yet, we'll use fetch
     const sessionResponse = await fetch("https://api.openai.com/v1/realtime/sessions", {
       method: "POST",
       headers: {
@@ -24,7 +49,8 @@ export async function POST(req: NextRequest) {
       },
       body: JSON.stringify({
         model: "gpt-4o-realtime-preview-2024-12-17", // Use the appropriate model from the documentation
-        voice: "ash", // The voice used for audio responses
+        voice: "alloy", // The voice used for audio responses
+        instructions: systemPrompt, // Set the system prompt here directly
       }),
     });
     
@@ -73,7 +99,8 @@ export async function POST(req: NextRequest) {
         sdp: answerSdp
       },
       ephemeralKey,
-      sessionId: sessionData.id
+      sessionId: sessionData.id,
+      systemPrompt: true // Signal to the frontend that we've set the system prompt
     }, { status: 200 });
 
   } catch (error) {
