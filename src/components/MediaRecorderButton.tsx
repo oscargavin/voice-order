@@ -4,24 +4,60 @@ import React, { useState, useEffect } from "react";
 import { Mic, MicOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
+// Define types for react-media-recorder
+interface ReactMediaRecorderHookResult {
+  status: string;
+  startRecording: () => void;
+  stopRecording: () => void;
+  mediaBlobUrl?: string;
+}
+
 // Client-side only recorder component
 const ClientMediaRecorder = ({
   onRecordingChange,
 }: {
   onRecordingChange: (isRecording: boolean) => void;
 }) => {
-  // Import the hook directly here - this component only runs on client
-  const { useReactMediaRecorder } = require("react-media-recorder");
+  // Using dynamic import to avoid require()
+  interface ReactMediaRecorderOptions {
+    audio: boolean;
+    blobPropertyBag?: BlobPropertyBag;
+    onStop?: (blobUrl: string, blob: Blob) => void;
+  }
 
-  const { status, startRecording, stopRecording, mediaBlobUrl } =
-    useReactMediaRecorder({
+  const [recorderHook, setRecorderHook] = useState<{
+    useReactMediaRecorder: (
+      options: ReactMediaRecorderOptions
+    ) => ReactMediaRecorderHookResult;
+  } | null>(null);
+
+  // Load the hook dynamically
+  useEffect(() => {
+    (async () => {
+      const mediaRecorder = await import("react-media-recorder");
+      setRecorderHook(mediaRecorder);
+    })();
+  }, []);
+
+  if (!recorderHook) {
+    return (
+      <Button disabled className="bg-green-600 hover:bg-green-700">
+        <Mic className="mr-2 h-4 w-4" />
+        Loading...
+      </Button>
+    );
+  }
+
+  const { status, startRecording, stopRecording } =
+    recorderHook.useReactMediaRecorder({
       audio: true,
       blobPropertyBag: { type: "audio/webm" },
-      onStop: (blobUrl: any, blob: { size: any }) => {
+      onStop: (blobUrl: string, blob: { size: number }) => {
         console.log("Recording stopped, blob URL:", blobUrl);
         console.log("Blob size:", blob?.size);
       },
     });
+
   const handleClick = () => {
     if (status === "recording") {
       console.log("Stopping recording");
