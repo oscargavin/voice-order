@@ -39,14 +39,15 @@ const VoiceOrderSystem = () => {
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState("");
   const [assistantResponse, setAssistantResponse] = useState("");
-  const [prevAssistantResponse, setPrevAssistantResponse] = useState("");
   const [audioTracks, setAudioTracks] = useState<MediaStreamTrack[]>([]);
   const [volume, setVolume] = useState(1);
   const [isMuted, setIsMuted] = useState(false);
   const [isAssistantSpeaking, setIsAssistantSpeaking] = useState(false);
-  const [isSpeaking, setIsSpeaking] = useState(false);
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [ephemeralKey, setEphemeralKey] = useState<string | null>(null);
+
+  // Refs for audio element and remote stream
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const remoteStreamRef = useRef<MediaStream | null>(null);
 
   // Order state
   const [order, setOrder] = useState<OrderState>({
@@ -62,62 +63,6 @@ const VoiceOrderSystem = () => {
   const messagesRef = useRef<
     Array<{ type: string; content: Record<string, unknown> }>
   >([]);
-
-  // Text-to-speech function using Web Speech API
-  const speakText = (text: string) => {
-    if (!text || isMuted || isSpeaking) return;
-
-    // Check if speech synthesis is available
-    if (!window.speechSynthesis) {
-      console.error("Speech synthesis not supported in this browser");
-      return;
-    }
-
-    // Create speech synthesis utterance
-    const utterance = new SpeechSynthesisUtterance(text);
-
-    // Set properties
-    utterance.volume = volume;
-    utterance.rate = 1.0;
-    utterance.pitch = 1.0;
-
-    // Select a voice (optional)
-    const voices = window.speechSynthesis.getVoices();
-    const femaleVoices = voices.filter(
-      (voice) =>
-        voice.name.includes("female") ||
-        voice.name.includes("woman") ||
-        voice.name.includes("girl") ||
-        voice.name.toLowerCase().includes("amy") ||
-        voice.name.toLowerCase().includes("samantha")
-    );
-
-    if (femaleVoices.length > 0) {
-      utterance.voice = femaleVoices[0];
-    }
-
-    // Event handlers
-    utterance.onstart = () => {
-      console.log("Speaking started:", text);
-      setIsSpeaking(true);
-      setIsAssistantSpeaking(true);
-    };
-
-    utterance.onend = () => {
-      console.log("Speaking ended");
-      setIsSpeaking(false);
-      setIsAssistantSpeaking(false);
-    };
-
-    utterance.onerror = (event) => {
-      console.error("Speech synthesis error", event);
-      setIsSpeaking(false);
-      setIsAssistantSpeaking(false);
-    };
-
-    // Speak the text
-    window.speechSynthesis.speak(utterance);
-  };
 
   // Initialize WebRTC connection
   const initializeConnection = async () => {
@@ -135,7 +80,7 @@ const VoiceOrderSystem = () => {
     setIsConnecting(true);
 
     try {
-      // Initialize connection with only essential audio setup
+      // Initialize connection with ICE servers
       const pc = new RTCPeerConnection({
         iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
       });
@@ -145,6 +90,22 @@ const VoiceOrderSystem = () => {
       channel.onmessage = handleChannelMessage;
       channel.onopen = () => {
         console.log("Data channel is open and ready");
+      };
+
+      // Set up audio track handling for remote (assistant) audio
+      pc.ontrack = (event) => {
+        console.log("Received remote track:", event.track.kind);
+
+        if (event.track.kind === "audio") {
+          // Store the remote stream for audio output
+          remoteStreamRef.current = event.streams[0];
+
+          // Connect the stream to the audio element
+          if (audioRef.current) {
+            audioRef.current.srcObject = event.streams[0];
+            console.log("Remote audio connected to audio element");
+          }
+        }
       };
 
       // Request access to the microphone and add the audio track to the peer connection
@@ -220,12 +181,10 @@ const VoiceOrderSystem = () => {
   const handleChannelMessage = (event: MessageEvent) => {
     try {
       const serverEvent = JSON.parse(event.data);
-      console.log("RAW EVENT FROM SERVER:", serverEvent);
+      console.log("Received event from server:", serverEvent);
 
       // Store message for debugging
       messagesRef.current.push({ type: "received", content: serverEvent });
-
-      console.log("Received event from server:", serverEvent);
 
       // Handle different event types
       switch (serverEvent.type) {
@@ -235,12 +194,11 @@ const VoiceOrderSystem = () => {
 
         case "response.created":
           console.log("Response started");
-          // Don't clear here, we'll accumulate the response
-          // setAssistantResponse("");
+          setAssistantResponse("");
           setIsAssistantSpeaking(true);
           break;
 
-        // Use the correct event type for response text
+        // Handle audio transcript from the realtime API
         case "response.audio_transcript.delta":
           // Append text delta to the transcript
           setAssistantResponse((prev) => prev + (serverEvent.delta || ""));
@@ -253,16 +211,13 @@ const VoiceOrderSystem = () => {
           );
           break;
 
+        case "response.audio.delta":
+          // This event contains audio chunks, but we're using WebRTC for audio playback
+          // No need to handle this directly as the audio will flow through the peer connection
+          break;
+
         case "response.done":
           console.log("Response complete");
-          // Speak any remaining text
-          const remainingText = assistantResponse.substring(
-            prevAssistantResponse.length
-          );
-          if (remainingText.length > 0) {
-            speakText(remainingText);
-            setPrevAssistantResponse(assistantResponse);
-          }
           setIsAssistantSpeaking(false);
           // Extract information from the response to update order state
           updateOrderFromResponse(assistantResponse);
@@ -305,7 +260,6 @@ const VoiceOrderSystem = () => {
   const startConversation = () => {
     if (dataChannel && dataChannel.readyState === "open") {
       // Set the system instructions
-      // eslint-disable-next-line react/no-unescaped-entities
       const systemPrompt = `
       You are a helpful order-taking assistant for OpenInfo Foodservice. 
       Follow this pattern for taking orders:
@@ -319,11 +273,15 @@ const VoiceOrderSystem = () => {
       Keep responses concise and professional. Extract customer name, account code (if provided), delivery date, and product information throughout the conversation.
     `;
 
-      // Update the session with our system instructions
+      // Update the session with our system instructions and voice settings
       const sessionUpdateEvent = {
         type: "session.update",
         session: {
           instructions: systemPrompt,
+          // Enable both text and audio modalities
+          modalities: ["text", "audio"],
+          // Specify voice settings
+          voice: "alloy", // You can use: alloy, echo, fable, onyx, nova, shimmer
         },
       };
 
@@ -335,6 +293,10 @@ const VoiceOrderSystem = () => {
         // Create an initial response to start the conversation
         const responseCreateEvent = {
           type: "response.create",
+          response: {
+            // Ensure both text and audio in the response
+            modalities: ["text", "audio"],
+          },
         };
 
         console.log("Sending response create:", responseCreateEvent);
@@ -349,56 +311,14 @@ const VoiceOrderSystem = () => {
       startConversation();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dataChannel]); // Either disable the rule or add startConversation to deps
+  }, [dataChannel]);
 
-  // Effect to speak new text when assistant response updates
+  // Effect to update audio volume
   useEffect(() => {
-    // Only speak if there's new content to speak
-    if (assistantResponse && assistantResponse !== prevAssistantResponse) {
-      // Get only the new part of the text
-      const newText = assistantResponse.substring(prevAssistantResponse.length);
-
-      // Speak the new text only if it's a complete sentence or phrase
-      if (newText.match(/[.!?](\s|$)/) || newText.length > 30) {
-        speakText(newText);
-        setPrevAssistantResponse(assistantResponse);
-      }
+    if (audioRef.current) {
+      audioRef.current.volume = isMuted ? 0 : volume;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [assistantResponse, prevAssistantResponse, isMuted, volume]);
-
-  // Effect to initialize voice synthesis
-  useEffect(() => {
-    // Load voices - may be async in some browsers
-    const loadVoices = () => {
-      window.speechSynthesis.getVoices();
-      console.log("Voices loaded:", window.speechSynthesis.getVoices().length);
-    };
-
-    loadVoices();
-
-    // Some browsers need this event to load voices
-    if (window.speechSynthesis.onvoiceschanged !== undefined) {
-      window.speechSynthesis.onvoiceschanged = loadVoices;
-    }
-
-    // Clean up speech synthesis when component unmounts
-    return () => {
-      if (window.speechSynthesis) {
-        window.speechSynthesis.cancel();
-      }
-    };
-  }, []);
-
-  // Effect to update audio volume or mute status
-  useEffect(() => {
-    if (isMuted) {
-      // Stop any ongoing speech
-      if (window.speechSynthesis) {
-        window.speechSynthesis.cancel();
-      }
-    }
-  }, [isMuted, volume]);
+  }, [volume, isMuted]);
 
   // Toggle microphone
   const toggleMicrophone = () => {
@@ -421,9 +341,9 @@ const VoiceOrderSystem = () => {
     const newMuteState = !isMuted;
     setIsMuted(newMuteState);
 
-    // If muting, stop any current speech
-    if (newMuteState && window.speechSynthesis) {
-      window.speechSynthesis.cancel();
+    // Update the audio element volume
+    if (audioRef.current) {
+      audioRef.current.volume = newMuteState ? 0 : volume;
     }
   };
 
@@ -517,6 +437,9 @@ const VoiceOrderSystem = () => {
 
       const responseEvent = {
         type: "response.create",
+        response: {
+          modalities: ["text", "audio"],
+        },
       };
 
       dataChannel.send(JSON.stringify(responseEvent));
@@ -529,11 +452,6 @@ const VoiceOrderSystem = () => {
       // Clean up resources when component unmounts
       if (connection) {
         connection.close();
-      }
-
-      // Clean up any ongoing speech synthesis
-      if (window.speechSynthesis) {
-        window.speechSynthesis.cancel();
       }
 
       // Disable audio tracks
@@ -636,57 +554,38 @@ const VoiceOrderSystem = () => {
 
         <CardContent className="pt-6">
           <div className="space-y-4">
+            {/* Hidden audio element for playing GPT-4o's voice response */}
+            <audio ref={audioRef} autoPlay playsInline className="hidden" />
+
             {/* Audio Controls */}
             {connection && (
-              <>
-                <div className="flex items-center space-x-4 p-2 bg-gray-100 dark:bg-gray-800 rounded-md">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={toggleMute}
-                    className={isMuted ? "text-gray-400" : "text-blue-600"}
-                  >
-                    {isMuted ? <VolumeX /> : <Volume2 />}
-                  </Button>
-                  <div className="flex-1">
-                    <Slider
-                      value={[volume * 100]}
-                      min={0}
-                      max={100}
-                      step={1}
-                      onValueChange={(values) => setVolume(values[0] / 100)}
-                      disabled={isMuted}
-                    />
-                  </div>
-                  {isAssistantSpeaking && (
-                    <div className="flex items-center">
-                      <span className="text-sm text-blue-600 animate-pulse">
-                        Speaking...
-                      </span>
-                    </div>
-                  )}
+              <div className="flex items-center space-x-4 p-2 bg-gray-100 dark:bg-gray-800 rounded-md">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={toggleMute}
+                  className={isMuted ? "text-gray-400" : "text-blue-600"}
+                >
+                  {isMuted ? <VolumeX /> : <Volume2 />}
+                </Button>
+                <div className="flex-1">
+                  <Slider
+                    value={[volume * 100]}
+                    min={0}
+                    max={100}
+                    step={1}
+                    onValueChange={(values) => setVolume(values[0] / 100)}
+                    disabled={isMuted}
+                  />
                 </div>
-
-                {/* Replace AudioDebugHelper with a simple TTS test button */}
-                <div className="p-3 border border-blue-300 bg-blue-50 rounded-md my-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-blue-700">
-                      Text-to-Speech Controls
+                {isAssistantSpeaking && (
+                  <div className="flex items-center">
+                    <span className="text-sm text-blue-600 animate-pulse">
+                      Speaking...
                     </span>
-                    <Button
-                      size="sm"
-                      className="bg-blue-500 text-white"
-                      onClick={() =>
-                        speakText(
-                          "Hello, this is a test of the text to speech system."
-                        )
-                      }
-                    >
-                      Test Speech
-                    </Button>
                   </div>
-                </div>
-              </>
+                )}
+              </div>
             )}
 
             <div className="border rounded-md p-4 bg-gray-50 dark:bg-gray-900 min-h-40 max-h-60 overflow-y-auto">
