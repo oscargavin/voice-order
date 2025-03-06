@@ -5,7 +5,7 @@ export async function POST(req: NextRequest) {
   try {
     // Parse request body to get offer and voice ID
     const body = await req.json();
-    const { offer, voiceId } = body;
+    const { offer } = body;
     
     if (!offer || !offer.sdp) {
       return NextResponse.json(
@@ -39,66 +39,64 @@ export async function POST(req: NextRequest) {
     Clearly identify exactly what fields you're collecting at each step, and confirm them before moving to the next step.
     `;
 
-    // First, create an ephemeral token using the OpenAI API
-    const sessionResponse = await fetch("https://api.openai.com/v1/realtime/sessions", {
+    // Create a session with ElevenLabs API
+    const sessionResponse = await fetch("https://api.elevenlabs.io/v1/conversation", {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
+        "xi-api-key": process.env.ELEVENLABS_API_KEY as string,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "gpt-4o-realtime-preview",
-        voice: voiceId || "ember", // Use the selected voice or default to ember
-        instructions: systemPrompt,
+        model_id: "eleven_flash_v2_5",
+        voice_id: "jobi", // Using Jobi voice
+        system_prompt: systemPrompt,
+        initial_message: "Hi, you've reached orders at OpenInfo Foodservice, where are you calling from today?",
+        output_format: "pcm_16000",
       }),
     });
     
     if (!sessionResponse.ok) {
       const errorText = await sessionResponse.text();
-      console.error("Error from OpenAI Sessions API:", errorText);
+      console.error("Error from ElevenLabs API:", errorText);
       return NextResponse.json(
-        { error: 'Failed to create session with OpenAI', details: errorText },
+        { error: 'Failed to create session with ElevenLabs', details: errorText },
         { status: sessionResponse.status }
       );
     }
     
     const sessionData = await sessionResponse.json();
 
-    // Use the ephemeral token to connect to the OpenAI Realtime API
-    const ephemeralKey = sessionData.client_secret.value;
-    
-    // Send the offer to OpenAI Realtime API
-    const baseUrl = "https://api.openai.com/v1/realtime";
-    const model = "gpt-4o-realtime-preview";
-    
-    const sdpResponse = await fetch(`${baseUrl}?model=${model}`, {
+    // Get the WebRTC connection details from ElevenLabs
+    const rtcResponse = await fetch(`https://api.elevenlabs.io/v1/conversation/${sessionData.conversation_id}/webrtc`, {
       method: "POST",
-      body: offer.sdp,
       headers: {
-        Authorization: `Bearer ${ephemeralKey}`,
-        "Content-Type": "application/sdp"
+        "xi-api-key": process.env.ELEVENLABS_API_KEY as string,
+        "Content-Type": "application/json",
       },
+      body: JSON.stringify({
+        sdp: offer.sdp,
+        type: offer.type,
+      }),
     });
 
-    if (!sdpResponse.ok) {
-      const errorText = await sdpResponse.text();
-      console.error("Error from OpenAI Realtime API:", errorText);
+    if (!rtcResponse.ok) {
+      const errorText = await rtcResponse.text();
+      console.error("Error from ElevenLabs WebRTC API:", errorText);
       return NextResponse.json(
-        { error: 'Failed to get SDP answer from OpenAI', details: errorText },
-        { status: sdpResponse.status }
+        { error: 'Failed to get SDP answer from ElevenLabs', details: errorText },
+        { status: rtcResponse.status }
       );
     }
 
-    const answerSdp = await sdpResponse.text();
+    const rtcData = await rtcResponse.json();
 
-    // Return the SDP answer from OpenAI
+    // Return the SDP answer from ElevenLabs
     return NextResponse.json({
       answer: {
         type: "answer",
-        sdp: answerSdp
+        sdp: rtcData.sdp
       },
-      ephemeralKey,
-      sessionId: sessionData.id,
+      conversationId: sessionData.conversation_id,
       systemPrompt: true
     }, { status: 200 });
 
