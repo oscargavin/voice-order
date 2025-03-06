@@ -14,6 +14,7 @@ import {
   ChevronDown,
   FileText,
   Bug,
+  Settings,
 } from "lucide-react";
 import {
   Card,
@@ -32,6 +33,13 @@ import {
   AccordionTrigger,
   AccordionContent,
 } from "@/components/ui/accordion";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 // Order state interface
 interface OrderState {
@@ -47,6 +55,22 @@ interface OrderState {
     | "confirmation";
   confirmed: boolean;
 }
+
+// Add voice model type and options
+type VoiceModel = {
+  id: string;
+  name: string;
+  description?: string;
+};
+
+const voiceModels: VoiceModel[] = [
+  { id: "alloy", name: "Alloy" },
+  { id: "ash", name: "Ash" },
+  { id: "ballad", name: "Ballad" },
+  { id: "coral", name: "Coral" },
+  { id: "sage", name: "Sage" },
+  { id: "verse", name: "Verse" },
+];
 
 const VoiceOrderSystem = () => {
   // State for the WebRTC connection and data channel
@@ -92,6 +116,9 @@ const VoiceOrderSystem = () => {
       )
       .join("\n");
   }, [conversationHistoryRef.current.length]);
+
+  // Add state for selected voice
+  const [selectedVoice, setSelectedVoice] = useState<string>("ballad");
 
   // Throttled function to extract order information
   const extractOrderInfo = async () => {
@@ -278,11 +305,14 @@ const VoiceOrderSystem = () => {
         }
       });
 
-      // Send the offer to your server, which will forward it to OpenAI
+      // Send the offer to your server with the selected voice model
       const response = await fetch("/api/realtime/session", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ offer: pc.localDescription }),
+        body: JSON.stringify({
+          offer: pc.localDescription,
+          voiceId: selectedVoice,
+        }),
       });
 
       const data = await response.json();
@@ -661,16 +691,38 @@ const VoiceOrderSystem = () => {
 
   return (
     <div className="container mx-auto max-w-2xl">
-      <Card className="w-full shadow-consistent border-0 overflow-hidden rounded-xl">
-        <div className="w-full  rounded-t-xl pt-0">
-          <div className="absolute right-0 top-0 w-full h-full bg-gray-700 shadow-inner opacity-70 pointer-events-none"></div>
+      <Card className="w-full shadow-xl border-2 border-gray-200/20 dark:border-gray-700/20 overflow-hidden rounded-xl bg-white/90 dark:bg-gray-900/90 backdrop-blur-sm">
+        <div className="w-full rounded-t-xl pt-0 bg-gradient-to-br from-gray-900 to-gray-800 dark:from-gray-800 dark:to-gray-900">
           <CardHeader className="border-b-0 pb-6 pt-6 text-white relative">
             <div className="flex justify-between items-center">
-              <CardTitle className="text-2xl font-bold">
+              <CardTitle className="text-2xl font-bold bg-gradient-to-r from-white to-gray-300 bg-clip-text text-transparent">
                 Voice Order Entry
               </CardTitle>
+              {!connection && (
+                <Select value={selectedVoice} onValueChange={setSelectedVoice}>
+                  <SelectTrigger className="w-[180px] bg-white/10 border-gray-700 text-white">
+                    <SelectValue placeholder="Select voice" />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-[300px]">
+                    {voiceModels.map((voice) => (
+                      <SelectItem
+                        key={voice.id}
+                        value={voice.id}
+                        className="flex flex-col items-start"
+                      >
+                        <span className="font-medium">{voice.name}</span>
+                        {voice.description && (
+                          <span className="text-xs text-gray-500">
+                            {voice.description}
+                          </span>
+                        )}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
             </div>
-            <CardDescription className="text-white/90 mt-2">
+            <CardDescription className="text-gray-300 mt-2">
               Follow the prompts to complete your food service order
             </CardDescription>
           </CardHeader>
@@ -741,7 +793,7 @@ const VoiceOrderSystem = () => {
           </div>
         </div>
 
-        <CardContent className="pt-6 px-8">
+        <CardContent className="pt-6 px-8 bg-white dark:bg-gray-900">
           <div className="space-y-6">
             {/* Hidden audio element for playing GPT-4o's voice response */}
             <audio ref={audioRef} autoPlay playsInline className="hidden" />
@@ -1081,7 +1133,7 @@ const VoiceOrderSystem = () => {
             </Accordion>
           </div>
         </CardContent>
-        <CardFooter className="pt-4 pb-6 px-8 flex flex-col">
+        <CardFooter className="pt-4 pb-6 px-8 flex flex-col bg-white dark:bg-gray-900">
           {order.confirmed ? (
             <div className="w-full bg-gradient-to-br from-gray-100 to-gray-50 dark:from-gray-800 dark:to-gray-850 border border-gray-200 dark:border-gray-700 rounded-xl p-8 text-center animate-fadeIn shadow-consistent relative overflow-hidden">
               <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_20%,rgba(255,255,255,0.1)_0%,rgba(0,0,0,0)_70%)] opacity-50 pointer-events-none"></div>

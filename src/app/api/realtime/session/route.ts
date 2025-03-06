@@ -3,9 +3,9 @@ import { NextRequest, NextResponse } from 'next/server';
 
 export async function POST(req: NextRequest) {
   try {
-    // Parse request body to get offer
+    // Parse request body to get offer and voice ID
     const body = await req.json();
-    const { offer } = body;
+    const { offer, voiceId } = body;
     
     if (!offer || !offer.sdp) {
       return NextResponse.json(
@@ -47,9 +47,9 @@ export async function POST(req: NextRequest) {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "gpt-4o-realtime-preview-2024-12-17", // Use the appropriate model from the documentation
-        voice: "alloy", // The voice used for audio responses
-        instructions: systemPrompt, // Set the system prompt here directly
+        model: "gpt-4o-realtime-preview",
+        voice: voiceId || "ember", // Use the selected voice or default to ember
+        instructions: systemPrompt,
       }),
     });
     
@@ -69,7 +69,7 @@ export async function POST(req: NextRequest) {
     
     // Send the offer to OpenAI Realtime API
     const baseUrl = "https://api.openai.com/v1/realtime";
-    const model = "gpt-4o-realtime-preview-2024-12-17"; // Same as above
+    const model = "gpt-4o-realtime-preview";
     
     const sdpResponse = await fetch(`${baseUrl}?model=${model}`, {
       method: "POST",
@@ -99,7 +99,7 @@ export async function POST(req: NextRequest) {
       },
       ephemeralKey,
       sessionId: sessionData.id,
-      systemPrompt: true // Signal to the frontend that we've set the system prompt
+      systemPrompt: true
     }, { status: 200 });
 
   } catch (error) {
