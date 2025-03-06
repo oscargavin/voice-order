@@ -73,11 +73,11 @@ const ClientMediaRecorder = ({
   return (
     <Button
       onClick={handleClick}
-      variant={status === "recording" ? "destructive" : "default"}
+      variant={status === "recording" ? "neutral" : "default"}
       className={
         status === "recording"
-          ? "bg-red-500 hover:bg-red-600"
-          : "bg-green-600 hover:bg-green-700"
+          ? "border-2 border-border"
+          : "border-2 border-border"
       }
     >
       {status === "recording" ? (

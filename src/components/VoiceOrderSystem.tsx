@@ -2,8 +2,19 @@
 /* eslint-disable react/no-unescaped-entities */
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
-import { Send, Loader2, Volume2, VolumeX, Mic, MicOff } from "lucide-react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
+import {
+  Send,
+  Loader2,
+  Volume2,
+  VolumeX,
+  Mic,
+  MicOff,
+  Check,
+  ChevronDown,
+  FileText,
+  Bug,
+} from "lucide-react";
 import {
   Card,
   CardContent,
@@ -15,6 +26,12 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Slider } from "@/components/ui/slider";
+import {
+  Accordion,
+  AccordionItem,
+  AccordionTrigger,
+  AccordionContent,
+} from "@/components/ui/accordion";
 
 // Order state interface
 interface OrderState {
@@ -44,10 +61,13 @@ const VoiceOrderSystem = () => {
   const [isMuted, setIsMuted] = useState(false);
   const [isAssistantSpeaking, setIsAssistantSpeaking] = useState(false);
   const [ephemeralKey, setEphemeralKey] = useState<string | null>(null);
+  const [isProcessingConversation, setIsProcessingConversation] =
+    useState(false);
 
   // Refs for audio element and remote stream
   const audioRef = useRef<HTMLAudioElement>(null);
   const remoteStreamRef = useRef<MediaStream | null>(null);
+  const debouncedExtractRef = useRef<NodeJS.Timeout | undefined>(undefined);
 
   // Order state
   const [order, setOrder] = useState<OrderState>({
@@ -61,8 +81,127 @@ const VoiceOrderSystem = () => {
 
   // Reference to store conversation history
   const conversationHistoryRef = useRef<
-    Array<{ role: "assistant" | "user"; content: string }>
+    Array<{ role: "user" | "assistant"; content: string }>
   >([]);
+
+  // For displaying conversation in the UI, we'll create a derived value
+  const displayedConversation = useMemo(() => {
+    return conversationHistoryRef.current
+      .map(
+        (msg) => `${msg.role === "user" ? "You" : "Assistant"}: ${msg.content}`
+      )
+      .join("\n");
+  }, [conversationHistoryRef.current.length]);
+
+  // Throttled function to extract order information
+  const extractOrderInfo = async () => {
+    setIsProcessingConversation(true);
+
+    try {
+      // Make a deep copy of the conversation history to avoid any reference issues
+      const conversationCopy = JSON.parse(
+        JSON.stringify(conversationHistoryRef.current)
+      );
+
+      const response = await fetch("/api/extract-order-info", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          conversationHistory: conversationCopy,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Error extracting order info: ${response.status}`);
+      }
+
+      const extractedInfo = await response.json();
+
+      // Check if we got valid data back
+      if (!extractedInfo || typeof extractedInfo !== "object") {
+        throw new Error("Invalid response format from extraction API");
+      }
+
+      // Log current state before update
+      console.log(JSON.stringify(order));
+
+      // Update order state with extracted information
+      const newOrderState = {
+        customer: extractedInfo.customer || "",
+        accountCode: extractedInfo.accountCode || "",
+        deliveryDate: extractedInfo.deliveryDate || "",
+        products: Array.isArray(extractedInfo.products)
+          ? extractedInfo.products
+          : [],
+        currentStep: extractedInfo.currentStep || "idle",
+        confirmed: extractedInfo.confirmed === true,
+      };
+
+      setOrder(newOrderState);
+
+      // Add a timeout to check if state was actually updated
+      setTimeout(() => {}, 1000);
+    } catch (error) {
+      console.error("Failed to extract order information:", error);
+    } finally {
+      setIsProcessingConversation(false);
+    }
+  };
+
+  // Debounce function for extracting order info
+  useEffect(() => {
+    // Clear any existing timeout
+    if (debouncedExtractRef.current) {
+      clearTimeout(debouncedExtractRef.current);
+    }
+
+    debouncedExtractRef.current = setTimeout(() => {
+      if (conversationHistoryRef.current.length >= 2) {
+        console.log("Debounce timer expired, triggering order info extraction");
+        extractOrderInfo();
+      }
+    }, 3000); // Increased to 3 seconds to allow for more complete responses and processing
+
+    return () => {
+      if (debouncedExtractRef.current) {
+        clearTimeout(debouncedExtractRef.current);
+      }
+    };
+  }, [transcript, assistantResponse]); // Trigger on both transcript and assistantResponse changes
+
+  // Log order state changes
+  useEffect(() => {
+    console.log(
+      "[ORDER-DIAG] Form values will be: Customer:",
+      order.customer,
+      "| Delivery Date:",
+      order.deliveryDate,
+      "| Products:",
+      JSON.stringify(order.products),
+      "| Current Step:",
+      order.currentStep
+    );
+  }, [order]);
+
+  // Test function to manually set order values - for debugging
+  const testOrderUpdate = () => {
+    const testData = {
+      customer: "Test Customer",
+      deliveryDate: "Next Monday",
+      products: [{ name: "Test Product", quantity: 5 }],
+      currentStep: "products",
+      confirmed: false,
+    };
+
+    setOrder((prev) => ({
+      ...prev,
+      customer: testData.customer,
+      deliveryDate: testData.deliveryDate,
+      products: testData.products,
+      currentStep: testData.currentStep as OrderState["currentStep"],
+      confirmed: testData.confirmed,
+    }));
+  };
 
   // Initialize WebRTC connection
   const initializeConnection = async () => {
@@ -94,8 +233,6 @@ const VoiceOrderSystem = () => {
 
       // Set up audio track handling for remote (assistant) audio
       pc.ontrack = (event) => {
-        console.log("Received remote track:", event.track.kind);
-
         if (event.track.kind === "audio") {
           // Store the remote stream for audio output
           remoteStreamRef.current = event.streams[0];
@@ -154,8 +291,6 @@ const VoiceOrderSystem = () => {
         throw new Error("Invalid response from server: missing SDP answer");
       }
 
-      console.log("Received answer:", data);
-
       // Store ephemeral key for later use
       if (data.ephemeralKey) {
         setEphemeralKey(data.ephemeralKey);
@@ -177,7 +312,6 @@ const VoiceOrderSystem = () => {
       // We'll wait a moment for the connection to stabilize
       if (data.systemPrompt && channel.readyState === "open") {
         setTimeout(() => {
-          console.log("Sending initial message to trigger assistant greeting");
           // Just create a response request to get the assistant to start speaking
           const responseCreateEvent = {
             type: "response.create",
@@ -198,16 +332,13 @@ const VoiceOrderSystem = () => {
   const handleChannelMessage = (event: MessageEvent) => {
     try {
       const serverEvent = JSON.parse(event.data);
-      console.log("Received event from server:", serverEvent);
 
       // Handle different event types
       switch (serverEvent.type) {
         case "session.created":
-          console.log("Session created:", serverEvent.session.id);
           break;
 
         case "response.created":
-          console.log("Response started");
           setAssistantResponse("");
           setIsAssistantSpeaking(true);
           break;
@@ -231,7 +362,6 @@ const VoiceOrderSystem = () => {
           break;
 
         case "response.done":
-          console.log("Response complete");
           setIsAssistantSpeaking(false);
 
           // Store assistant response in conversation history
@@ -240,19 +370,24 @@ const VoiceOrderSystem = () => {
               role: "assistant",
               content: assistantResponse,
             });
-          }
 
-          // Extract information from the response to update order state
-          updateOrderFromResponse(assistantResponse);
+            // Check for order completion
+            checkConversationCompletion(assistantResponse);
+
+            // Cancel any pending debounced extraction
+            clearTimeout(debouncedExtractRef.current);
+            // Short delay to ensure UI is updated
+            setTimeout(() => {
+              extractOrderInfo();
+            }, 500);
+          }
           break;
 
         case "input_audio_buffer.speech_started":
-          console.log("User started speaking");
           setIsListening(true);
           break;
 
         case "input_audio_buffer.speech_stopped":
-          console.log("User stopped speaking");
           setIsListening(false);
           break;
 
@@ -270,6 +405,15 @@ const VoiceOrderSystem = () => {
               role: "user",
               content: userText,
             });
+
+            // Cancel any pending debounced extraction
+            if (debouncedExtractRef.current) {
+              clearTimeout(debouncedExtractRef.current);
+            }
+            // Short delay to ensure conversation history is updated
+            setTimeout(() => {
+              extractOrderInfo();
+            }, 500);
           }
           break;
 
@@ -327,7 +471,6 @@ const VoiceOrderSystem = () => {
         },
       };
 
-      console.log("Sending session update:", sessionUpdateEvent);
       dataChannel.send(JSON.stringify(sessionUpdateEvent));
 
       // Wait a moment for the session update to take effect
@@ -347,7 +490,6 @@ const VoiceOrderSystem = () => {
           },
         };
 
-        console.log("Sending initial message:", initialMessageEvent);
         dataChannel.send(JSON.stringify(initialMessageEvent));
 
         // Then create a response to get the assistant to speak
@@ -360,7 +502,6 @@ const VoiceOrderSystem = () => {
             },
           };
 
-          console.log("Sending response create:", responseCreateEvent);
           dataChannel.send(JSON.stringify(responseCreateEvent));
         }, 500);
       }, 1000);
@@ -370,12 +511,10 @@ const VoiceOrderSystem = () => {
   // Effect to initialize the conversation once data channel is set
   useEffect(() => {
     if (dataChannel && dataChannel.readyState === "open") {
-      console.log("Data channel is open, starting conversation...");
       startConversation();
 
       // Add event listener for data channel state changes
       dataChannel.onopen = () => {
-        console.log("Data channel opened or reopened");
         startConversation();
       };
     }
@@ -416,164 +555,6 @@ const VoiceOrderSystem = () => {
     }
   };
 
-  // Advanced parsing function for product extraction
-  const extractProducts = (
-    text: string
-  ): Array<{ name: string; quantity: number }> => {
-    // Look for patterns like "2 boxes of tomatoes", "5 cases of oranges", etc.
-    const productRegex =
-      /(\d+)\s+(?:box(?:es)?|case(?:s)?|pack(?:s)?|of)\s+([\w\s]+?)(?:,|\.|$)/gi;
-    const matches = [...text.matchAll(productRegex)];
-
-    return matches
-      .map((match) => {
-        const quantity = parseInt(match[1], 10);
-        // Clean up the product name by removing trailing spaces and punctuation
-        const name = match[2].trim().replace(/[,.;]$/, "");
-        return { name, quantity };
-      })
-      .filter((product) => product.name && !isNaN(product.quantity));
-  };
-
-  // Update order state based on assistant's response and user input
-  const updateOrderFromResponse = (text: string) => {
-    const newOrder = { ...order };
-    const fullConversation = conversationHistoryRef.current;
-
-    console.log("Updating order from response:", text);
-    console.log("Current step:", order.currentStep);
-    console.log("Conversation history:", fullConversation);
-
-    // Check if this is the initial greeting from the assistant
-    if (
-      text.includes("Hi, you've reached orders at OpenInfo Foodservice") &&
-      order.currentStep === "customer"
-    ) {
-      console.log("Detected initial greeting - waiting for customer info");
-      // No action needed - just detected the initial greeting
-    }
-
-    // Step 1: Extract customer information during customer step
-    if (order.currentStep === "customer" && order.customer === "") {
-      // Find the last user message after being asked about customer/account info
-      const askCustomerIndex = fullConversation.findIndex(
-        (msg) =>
-          msg.role === "assistant" &&
-          msg.content.includes("where are you calling from today")
-      );
-
-      if (
-        askCustomerIndex >= 0 &&
-        askCustomerIndex < fullConversation.length - 1
-      ) {
-        const userResponse = fullConversation.find(
-          (msg, idx) =>
-            idx > askCustomerIndex &&
-            msg.role === "user" &&
-            msg.content !== "start order process"
-        );
-
-        if (userResponse) {
-          // Use the user's entire response as the customer name
-          newOrder.customer = userResponse.content.trim();
-          newOrder.currentStep = "deliveryDate";
-          console.log("Extracted customer:", newOrder.customer);
-        }
-      }
-
-      // Also check if the assistant has moved on to asking about delivery date
-      if (text.includes("When would you like this delivered")) {
-        newOrder.currentStep = "deliveryDate";
-        console.log(
-          "Assistant asking about delivery date - moving to next step"
-        );
-      }
-    }
-
-    // Step 2: Extract delivery date
-    else if (
-      order.currentStep === "deliveryDate" &&
-      order.deliveryDate === ""
-    ) {
-      // Check if the current assistant response is confirming a date
-      if (text.includes("So that's")) {
-        // Extract the date from the confirmation message
-        const dateMatch = text.match(/So that's ([\w\s\d]+)(\.|\?|$)/i);
-        if (dateMatch && dateMatch[1]) {
-          newOrder.deliveryDate = dateMatch[1].trim();
-          newOrder.currentStep = "products";
-          console.log(
-            "Extracted delivery date from confirmation:",
-            newOrder.deliveryDate
-          );
-        }
-      } else {
-        // Look through conversation history for date confirmation
-        const dateConfirmIndex = fullConversation.findIndex(
-          (msg) => msg.role === "assistant" && msg.content.includes("So that's")
-        );
-
-        if (dateConfirmIndex >= 0) {
-          const dateMsg = fullConversation[dateConfirmIndex];
-          const dateMatch = dateMsg.content.match(
-            /So that's ([\w\s\d]+)(\.|\?|$)/i
-          );
-          if (dateMatch && dateMatch[1]) {
-            newOrder.deliveryDate = dateMatch[1].trim();
-            newOrder.currentStep = "products";
-            console.log(
-              "Extracted delivery date from history:",
-              newOrder.deliveryDate
-            );
-          }
-        }
-
-        // Check if we've moved on to asking about products
-        if (text.includes("And what would you like")) {
-          newOrder.currentStep = "products";
-          console.log("Assistant asking about products - moving to next step");
-        }
-      }
-    }
-
-    // Step 3: Extract products mentioned by the user
-    else if (order.currentStep === "products") {
-      // Find messages after asking "And what would you like?"
-      const askProductIndex = fullConversation.findIndex(
-        (msg) =>
-          msg.role === "assistant" &&
-          msg.content.includes("And what would you like")
-      );
-
-      if (askProductIndex >= 0) {
-        // Collect all user responses after the product question
-        const userResponses = fullConversation.filter(
-          (msg, idx) => idx > askProductIndex && msg.role === "user"
-        );
-
-        // Extract products from all user responses
-        const allProducts = userResponses.flatMap((msg) =>
-          extractProducts(msg.content)
-        );
-
-        if (allProducts.length > 0) {
-          newOrder.products = allProducts;
-          console.log("Extracted products:", allProducts);
-        }
-      }
-    }
-
-    // Step 4: Check for order confirmation
-    if (text.includes("order received") || text.includes("confirmation")) {
-      newOrder.currentStep = "confirmation";
-      newOrder.confirmed = true;
-      console.log("Order confirmed");
-    }
-
-    // Update the order state
-    setOrder(newOrder);
-  };
-
   // Send user speech as text
   const sendUserMessage = (text: string) => {
     if (dataChannel && dataChannel.readyState === "open") {
@@ -593,7 +574,6 @@ const VoiceOrderSystem = () => {
         },
       };
 
-      console.log("Sending user message:", event);
       dataChannel.send(JSON.stringify(event));
 
       // Store user message in conversation history
@@ -602,6 +582,7 @@ const VoiceOrderSystem = () => {
         content: text,
       });
 
+      // Trigger a response from the assistant
       const responseEvent = {
         type: "response.create",
         response: {
@@ -610,6 +591,15 @@ const VoiceOrderSystem = () => {
       };
 
       dataChannel.send(JSON.stringify(responseEvent));
+
+      // Cancel any pending debounced extraction
+      if (debouncedExtractRef.current) {
+        clearTimeout(debouncedExtractRef.current);
+      }
+      // Short delay to ensure conversation history is updated
+      setTimeout(() => {
+        extractOrderInfo();
+      }, 500);
     }
   };
 
@@ -636,243 +626,501 @@ const VoiceOrderSystem = () => {
     { id: "confirmation", label: "Confirmation" },
   ];
 
-  return (
-    <div className="container mx-auto max-w-2xl py-8">
-      <Card className="w-full shadow-lg border-gray-200">
-        <CardHeader className="border-b pb-3">
-          <div className="flex justify-between items-center">
-            <CardTitle className="text-xl font-bold">
-              Voice Order Entry
-            </CardTitle>
+  // Function to check if conversation is complete
+  const checkConversationCompletion = (message: string) => {
+    const completionPhrases = [
+      "Great, order received",
+      "confirmation to this number",
+      "Have a nice day",
+      "send a confirmation",
+    ];
 
-            {!connection ? (
-              <Button
-                onClick={initializeConnection}
-                disabled={isConnecting}
-                className="bg-blue-600 hover:bg-blue-700 text-white"
-              >
-                {isConnecting ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Connecting...
-                  </>
-                ) : (
-                  "Start Order"
-                )}
-              </Button>
-            ) : (
-              <div className="flex space-x-2">
-                <Button
-                  onClick={toggleMicrophone}
-                  variant={isListening ? "destructive" : "default"}
-                  className={
-                    isListening
-                      ? "bg-red-500 hover:bg-red-600"
-                      : "bg-green-600 hover:bg-green-700"
-                  }
-                >
-                  {isListening ? (
-                    <>
-                      <MicOff className="mr-2 h-4 w-4" />
-                      Stop
-                    </>
-                  ) : (
-                    <>
-                      <Mic className="mr-2 h-4 w-4" />
-                      Speak
-                    </>
-                  )}
-                </Button>
-              </div>
+    const isCompletionMessage = completionPhrases.some((phrase) =>
+      message.toLowerCase().includes(phrase.toLowerCase())
+    );
+
+    if (isCompletionMessage) {
+      // Set the order as completed
+      setOrder((prev) => {
+        // Only update if not already confirmed
+        if (!prev.confirmed) {
+          return {
+            ...prev,
+            currentStep: "confirmation",
+            confirmed: true,
+          };
+        }
+        return prev;
+      });
+
+      return true;
+    }
+
+    return false;
+  };
+
+  return (
+    <div className="container mx-auto max-w-2xl">
+      <Card className="w-full shadow-consistent border-0 overflow-hidden rounded-xl">
+        <div className="w-full  rounded-t-xl pt-0">
+          <div className="absolute right-0 top-0 w-full h-full bg-gray-700 shadow-inner opacity-70 pointer-events-none"></div>
+          <CardHeader className="border-b-0 pb-6 pt-6 text-white relative">
+            <div className="flex justify-between items-center">
+              <CardTitle className="text-2xl font-bold">
+                Voice Order Entry
+              </CardTitle>
+            </div>
+            <CardDescription className="text-white/90 mt-2">
+              Follow the prompts to complete your food service order
+            </CardDescription>
+          </CardHeader>
+        </div>
+        <div className="px-8 py-6 bg-card">
+          <div className="flex justify-between relative">
+            {/* Background connector line */}
+            <div
+              className="absolute top-5 left-0 right-0 h-1 bg-muted rounded-full"
+              style={{ width: "90%", margin: "0 auto" }}
+            />
+
+            {/* Progress connector line */}
+            {order.currentStep !== "idle" && (
+              <div
+                className="absolute top-5 left-0 h-1 bg-gray-600 dark:bg-gray-500 rounded-full pointer-events-none"
+                style={{
+                  width: `${
+                    order.confirmed
+                      ? 90
+                      : (steps.findIndex((s) => s.id === order.currentStep) /
+                          (steps.length - 1)) *
+                        90
+                  }%`,
+                  margin: "0 auto 0 5%",
+                  transition: "width 0.6s cubic-bezier(0.65, 0, 0.35, 1)",
+                }}
+              />
             )}
-          </div>
-          <CardDescription>
-            Follow the prompts to complete your food service order
-          </CardDescription>
-        </CardHeader>
-        <div className="px-6 py-3 bg-gray-50 dark:bg-gray-800">
-          <div className="flex justify-between">
+
             {steps.map((step, index) => (
-              <div key={step.id} className="flex flex-col items-center">
+              <div key={step.id} className="flex flex-col items-center z-10">
                 <div
-                  className={`w-8 h-8 rounded-full flex items-center justify-center mb-1 
-                    ${
-                      order.currentStep === step.id
-                        ? "bg-blue-600 text-white"
-                        : order.currentStep === "idle" ||
-                          steps.findIndex((s) => s.id === order.currentStep) <
-                            index
-                        ? "bg-gray-200 text-gray-500 dark:bg-gray-700"
-                        : "bg-green-500 text-white"
-                    }`}
+                  className={`w-10 h-10 rounded-full flex items-center justify-center mb-2 shadow-md step-transition ${
+                    order.currentStep === step.id
+                      ? "bg-gray-700 text-white scale-110 animate-scaleIn"
+                      : order.currentStep === "idle"
+                      ? "bg-gray-100 text-gray-400 dark:bg-gray-800"
+                      : steps.findIndex((s) => s.id === order.currentStep) <=
+                        index
+                      ? "bg-gray-100 text-gray-400 dark:bg-gray-800"
+                      : "bg-gray-600 text-white animate-fadeIn"
+                  }`}
                 >
-                  {steps.findIndex((s) => s.id === order.currentStep) > index
-                    ? "✓"
-                    : index + 1}
+                  {steps.findIndex((s) => s.id === order.currentStep) > index ||
+                  (order.currentStep === "confirmation" &&
+                    step.id === "confirmation" &&
+                    order.confirmed) ? (
+                    <Check className="h-5 w-5 animate-scaleIn" />
+                  ) : (
+                    <span className="font-medium">{index + 1}</span>
+                  )}
                 </div>
-                <span className="text-xs">{step.label}</span>
-                {index < steps.length - 1 && (
-                  <div className="absolute h-0.5 w-16 bg-gray-200 dark:bg-gray-700 mt-4 ml-12"></div>
-                )}
+                <span
+                  className={`text-sm font-medium step-transition ${
+                    order.currentStep === step.id
+                      ? "text-gray-700 dark:text-gray-300"
+                      : steps.findIndex((s) => s.id === order.currentStep) >
+                        index
+                      ? "text-gray-700 dark:text-gray-300"
+                      : "text-gray-500 dark:text-gray-400"
+                  }`}
+                >
+                  {step.label}
+                </span>
               </div>
             ))}
           </div>
         </div>
 
-        <CardContent className="pt-6">
-          <div className="space-y-4">
+        <CardContent className="pt-6 px-8">
+          <div className="space-y-6">
             {/* Hidden audio element for playing GPT-4o's voice response */}
             <audio ref={audioRef} autoPlay playsInline className="hidden" />
 
             {/* Audio Controls */}
             {connection && (
-              <div className="flex items-center space-x-4 p-2 bg-gray-100 dark:bg-gray-800 rounded-md">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={toggleMute}
-                  className={isMuted ? "text-gray-400" : "text-blue-600"}
-                >
-                  {isMuted ? <VolumeX /> : <Volume2 />}
-                </Button>
-                <div className="flex-1">
-                  <Slider
-                    value={[volume * 100]}
-                    min={0}
-                    max={100}
-                    step={1}
-                    onValueChange={(values) => setVolume(values[0] / 100)}
-                    disabled={isMuted}
-                  />
-                </div>
-                {isAssistantSpeaking && (
-                  <div className="flex items-center">
-                    <span className="text-sm text-blue-600 animate-pulse">
-                      Speaking...
-                    </span>
+              <div className="flex items-center justify-between p-3 bg-secondary/70 border-2 border-border rounded-base mb-4 shadow-md">
+                <div className="flex items-center space-x-4">
+                  <Button
+                    variant="default"
+                    size="icon"
+                    onClick={toggleMute}
+                    className={isMuted ? "opacity-50" : ""}
+                  >
+                    {isMuted ? <VolumeX /> : <Volume2 />}
+                  </Button>
+                  <div className="w-32">
+                    <Slider
+                      value={[volume * 100]}
+                      min={0}
+                      max={100}
+                      step={5}
+                      onValueChange={(vals) => setVolume(vals[0] / 100)}
+                      disabled={isMuted}
+                      className={isMuted ? "opacity-50" : ""}
+                    />
                   </div>
+                </div>
+
+                {isAssistantSpeaking && (
+                  <Badge variant="default" className="animate-pulse">
+                    Assistant speaking...
+                  </Badge>
                 )}
               </div>
             )}
 
-            <div className="border rounded-md p-4 bg-gray-50 dark:bg-gray-900 min-h-40 max-h-60 overflow-y-auto">
-              <div className="flex flex-col space-y-4">
-                {/* Conversation Transcript Section */}
-                <div className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  Conversation Transcript:
+            {/* Start Voice Order - Present before conversation */}
+            {!connection && (
+              <div className="w-full flex flex-col items-center justify-center py-10 mb-6">
+                <div className="mb-3 text-center max-w-md mx-auto">
+                  <div className="relative w-24 h-24 bg-gradient-to-br from-gray-200 to-gray-100 dark:from-gray-700 dark:to-gray-800 rounded-xl flex items-center justify-center mx-auto mb-8 shadow-consistent overflow-hidden">
+                    <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_20%,rgba(255,255,255,0.2)_0%,rgba(0,0,0,0)_70%)] opacity-80 pointer-events-none"></div>
+                    <Mic className="w-10 h-10 text-gray-700 dark:text-gray-300 relative z-10" />
+                  </div>
+                  <h3 className="text-2xl font-medium mb-3 text-foreground">
+                    Start your voice order
+                  </h3>
+                  <p className="text-foreground/80 mb-8 leading-relaxed max-w-sm mx-auto">
+                    Click the button below to begin. You'll be guided through
+                    placing your order using voice recognition.
+                  </p>
+                  <Button
+                    onClick={initializeConnection}
+                    disabled={isConnecting}
+                    className="px-8 py-6 h-auto text-lg shadow-consistent transition-all duration-200 cursor-pointer rounded-xl hover:translate-y-[-2px] relative z-20"
+                  >
+                    {isConnecting ? (
+                      <>
+                        <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                        Connecting...
+                      </>
+                    ) : (
+                      "Start Voice Order"
+                    )}
+                  </Button>
                 </div>
+              </div>
+            )}
 
-                {/* Always display this section when a connection exists */}
-                {connection ? (
-                  <div className="flex flex-col space-y-3">
-                    {assistantResponse && (
-                      <div className="mb-2">
-                        <div className="text-xs text-gray-500 mb-1">
-                          Assistant:
+            {/* Conversation Transcript with Waveform */}
+            <div className="space-y-4">
+              <h3 className="text-lg font-medium border-b pb-2">
+                Conversation:
+              </h3>
+              <div className="mb-4">
+                {connection && (
+                  <div className="mb-4 rounded-base overflow-hidden">
+                    <div
+                      className={`p-4 ${
+                        isListening
+                          ? "bg-main text-mtext border-2 border-border"
+                          : "bg-bw text-text border-2 border-border"
+                      } rounded-base shadow-shadow transition-all duration-200`}
+                    >
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center">
+                          <Button
+                            onClick={toggleMicrophone}
+                            variant={isListening ? "neutral" : "default"}
+                            size="sm"
+                            className={
+                              isListening
+                                ? "mr-3 transition-all duration-200 cursor-pointer"
+                                : "mr-3 transition-all duration-200 cursor-pointer"
+                            }
+                          >
+                            {isListening ? (
+                              <>
+                                <MicOff className="mr-2 h-4 w-4" />
+                                Stop
+                              </>
+                            ) : (
+                              <>
+                                <Mic className="mr-2 h-4 w-4" />
+                                Speak
+                              </>
+                            )}
+                          </Button>
+                          <span className="text-sm font-medium">You</span>
                         </div>
-                        <div className="bg-blue-100 dark:bg-blue-900/30 p-2 rounded-lg text-gray-800 dark:text-gray-200">
-                          {assistantResponse}
+                        <Badge
+                          variant="default"
+                          className={isListening ? "animate-pulse" : ""}
+                        >
+                          {isListening ? "Listening..." : "Click Speak"}
+                        </Badge>
+                      </div>
+                      {isListening && (
+                        <div className="flex items-center justify-center h-6 overflow-hidden mt-2">
+                          <div className="flex space-x-1">
+                            {[...Array(12)].map((_, i) => (
+                              <div
+                                key={i}
+                                className="w-1 h-1 bg-border rounded-full"
+                                style={{
+                                  animation: `pulseUpDown 1s ease-in-out infinite`,
+                                  animationDelay: `${i * 0.1}s`,
+                                  transform: "translateY(0)",
+                                }}
+                              />
+                            ))}
+                          </div>
                         </div>
-                      </div>
-                    )}
+                      )}
+                    </div>
+                  </div>
+                )}
 
-                    {transcript && (
-                      <div className="mb-2">
-                        <div className="text-xs text-gray-500 mb-1">You:</div>
-                        <div className="bg-green-100 dark:bg-green-900/30 p-2 rounded-lg text-gray-800 dark:text-gray-200">
-                          {transcript}
+                <div className="rounded-base overflow-hidden mt-3">
+                  <div
+                    className={`p-4 ${
+                      isAssistantSpeaking
+                        ? "bg-main text-mtext border-2 border-border"
+                        : "bg-bw text-text border-2 border-border"
+                    } rounded-base shadow-shadow transition-all duration-200`}
+                  >
+                    <div className="flex items-center justify-between mb-3">
+                      <span className="text-sm font-medium">Assistant</span>
+                      {isAssistantSpeaking && (
+                        <Badge variant="default" className="animate-pulse">
+                          Speaking...
+                        </Badge>
+                      )}
+                    </div>
+                    {isAssistantSpeaking && (
+                      <div className="flex items-center justify-center h-6 overflow-hidden mt-2">
+                        <div className="flex space-x-1">
+                          {[...Array(12)].map((_, i) => (
+                            <div
+                              key={i}
+                              className="w-1 h-1 bg-border rounded-full"
+                              style={{
+                                animation: `pulseUpDown 1s ease-in-out infinite`,
+                                animationDelay: `${i * 0.1}s`,
+                                transform: "translateY(0)",
+                              }}
+                            />
+                          ))}
                         </div>
-                      </div>
-                    )}
-
-                    {isListening && (
-                      <div className="flex items-center text-blue-500">
-                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                        <span className="text-sm">Listening...</span>
-                      </div>
-                    )}
-
-                    {!assistantResponse && !transcript && !isListening && (
-                      <div className="text-gray-500 italic text-sm">
-                        When you speak or the assistant responds, the transcript
-                        will appear here.
                       </div>
                     )}
                   </div>
+                </div>
+              </div>
+
+              <div className="bg-gradient-to-r from-gray-50 to-gray-100 dark:from-gray-800/80 dark:to-gray-800 border border-gray-200 dark:border-gray-700/50 rounded-xl p-4 h-60 overflow-y-auto mb-4 shadow-consistent relative z-10">
+                {displayedConversation ? (
+                  <div className="space-y-4">
+                    {displayedConversation
+                      .split("\n")
+                      .filter((line) => line.trim() !== "")
+                      .map((line, i) => {
+                        if (line.startsWith("You: ")) {
+                          return (
+                            <div
+                              key={i}
+                              className="flex items-start animate-slideRight"
+                            >
+                              <div className="flex-shrink-0 w-8 h-8 rounded-full bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 flex items-center justify-center mr-2 shadow-sm">
+                                <span className="text-xs font-medium">You</span>
+                              </div>
+                              <div className="bg-gradient-to-r from-gray-200 to-gray-100 dark:from-gray-700 dark:to-gray-800 text-gray-800 dark:text-gray-200 p-3 rounded-xl border border-gray-200 dark:border-gray-700/50 max-w-[80%] shadow-sm transform transition-all duration-200 hover:translate-y-[-2px] hover:shadow-md relative z-10">
+                                {line.replace("You: ", "")}
+                              </div>
+                            </div>
+                          );
+                        } else if (line.startsWith("Assistant: ")) {
+                          return (
+                            <div
+                              key={i}
+                              className="flex items-start flex-row-reverse animate-slideRight"
+                            >
+                              <div className="flex-shrink-0 w-8 h-8 rounded-full bg-gray-300 dark:bg-gray-700 text-gray-700 dark:text-gray-300 flex items-center justify-center ml-2 shadow-sm">
+                                <span className="text-xs font-medium">AI</span>
+                              </div>
+                              <div className="bg-gradient-to-r from-gray-300 to-gray-200 dark:from-gray-700 dark:to-gray-800 text-gray-800 dark:text-gray-200 p-3 rounded-xl border border-gray-200 dark:border-gray-700/50 max-w-[80%] shadow-sm transform transition-all duration-200 hover:translate-y-[-2px] hover:shadow-md relative z-10">
+                                {line.replace("Assistant: ", "")}
+                              </div>
+                            </div>
+                          );
+                        }
+                        return null;
+                      })}
+                  </div>
                 ) : (
-                  <div className="flex items-center justify-center h-24 text-gray-500">
-                    Click "Start Order" to begin the conversation
+                  <div className="h-full flex items-center justify-center text-foreground">
+                    <p className="text-center border border-gray-200 dark:border-gray-700 p-4 rounded-xl bg-white/50 dark:bg-gray-700/30 shadow-sm transform transition-all duration-300 hover:translate-y-[-2px] hover:shadow-md">
+                      {connection
+                        ? "Conversation will appear here..."
+                        : 'Click "Start Voice Order" to begin the conversation'}
+                    </p>
                   </div>
                 )}
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <p className="text-sm font-medium text-gray-500">Customer</p>
-                <div className="p-3 min-h-10 border rounded-md bg-white dark:bg-gray-950">
-                  {order.customer || "-"}
-                </div>
-              </div>
+            {/* Order Details Section in Accordion */}
+            <Accordion type="single" collapsible className="w-full">
+              <AccordionItem value="order-details" className="border-0">
+                <AccordionTrigger className="py-3 px-4 bg-gray-700 border border-gray-200 dark:border-gray-700/50 rounded-xl hover:no-underline hover:shadow-sm transition-all duration-200 relative z-20">
+                  <div className="flex items-center">
+                    <FileText className="w-5 h-5 mr-2 text-gray-500 dark:text-gray-400" />
+                    <span className="font-medium text-gray-700 dark:text-gray-300">
+                      Order Details
+                    </span>
+                  </div>
+                </AccordionTrigger>
+                <AccordionContent className="pt-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-4">
+                      <div>
+                        <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400 mb-2">
+                          Customer
+                        </h3>
+                        <div className="p-3 bg-white/70 dark:bg-gray-800/50 rounded-xl border border-gray-200 dark:border-gray-700/50 min-h-12 shadow-sm">
+                          {order.customer || "-"}
+                        </div>
+                      </div>
 
-              <div className="space-y-2">
-                <p className="text-sm font-medium text-gray-500">
-                  Delivery Date
-                </p>
-                <div className="p-3 min-h-10 border rounded-md bg-white dark:bg-gray-950">
-                  {order.deliveryDate || "-"}
-                </div>
-              </div>
-            </div>
+                      <div>
+                        <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400 mb-2">
+                          Delivery Date
+                        </h3>
+                        <div className="p-3 bg-white/70 dark:bg-gray-800/50 rounded-xl border border-gray-200 dark:border-gray-700/50 min-h-12 shadow-sm">
+                          {order.deliveryDate || "-"}
+                        </div>
+                      </div>
+                    </div>
 
-            <div className="space-y-2">
-              <p className="text-sm font-medium text-gray-500">Products</p>
-              <div className="p-3 min-h-20 border rounded-md bg-white dark:bg-gray-950">
-                {order.products.length > 0 ? (
-                  <ul className="list-disc pl-5">
-                    {order.products.map((product, index) => (
-                      <li key={index}>
-                        {product.quantity} × {product.name}
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  "-"
-                )}
-              </div>
-            </div>
+                    <div>
+                      <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400 mb-2">
+                        Products
+                      </h3>
+                      <div className="p-3 bg-white/70 dark:bg-gray-800/50 rounded-xl border border-gray-200 dark:border-gray-700/50 min-h-36 shadow-sm">
+                        {order.products.length > 0 ? (
+                          <ul className="space-y-2">
+                            {order.products.map((product, index) => (
+                              <li
+                                key={index}
+                                className="flex justify-between items-center"
+                              >
+                                <span>{product.name}</span>
+                                <Badge
+                                  variant="default"
+                                  className="bg-gray-200 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300"
+                                >
+                                  {product.quantity}
+                                </Badge>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          "-"
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </AccordionContent>
+              </AccordionItem>
+
+              {/* Debug Info Accordion - Only visible in development mode */}
+              {process.env.NODE_ENV === "development" && (
+                <AccordionItem value="debug-info" className="border-0 mt-4">
+                  <AccordionTrigger className="py-3 px-4 bg-gray-700 border border-gray-200 dark:border-gray-700/50 rounded-xl hover:no-underline hover:shadow-sm transition-all duration-200 relative z-20">
+                    <div className="flex items-center">
+                      <Bug className="w-5 h-5 mr-2 text-gray-500 dark:text-gray-400" />
+                      <span className="font-medium text-gray-700 dark:text-gray-300">
+                        Debug Info
+                      </span>
+                    </div>
+                  </AccordionTrigger>
+                  <AccordionContent className="pt-4">
+                    <div className="p-3 bg-white/70 dark:bg-gray-800/50 rounded-xl border border-gray-200 dark:border-gray-700/50 text-xs font-mono shadow-sm">
+                      <div className="font-bold mb-1 text-gray-700 dark:text-gray-300">
+                        Debug Info:
+                      </div>
+                      <div className="text-gray-600 dark:text-gray-400">
+                        Customer: "{order.customer}"
+                      </div>
+                      <div className="text-gray-600 dark:text-gray-400">
+                        Delivery Date: "{order.deliveryDate}"
+                      </div>
+                      <div className="text-gray-600 dark:text-gray-400">
+                        Products: {JSON.stringify(order.products)}
+                      </div>
+                      <div className="text-gray-600 dark:text-gray-400">
+                        Current Step: {order.currentStep}
+                      </div>
+                      <div className="text-gray-600 dark:text-gray-400">
+                        Confirmed: {order.confirmed ? "Yes" : "No"}
+                      </div>
+
+                      {/* Debug button for testing order updates */}
+                      <Button
+                        onClick={testOrderUpdate}
+                        variant="default"
+                        size="sm"
+                        className="mt-2 text-xs bg-gray-200 hover:bg-gray-300 text-gray-700 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-300 border border-gray-300 dark:border-gray-600"
+                      >
+                        Test Update Order
+                      </Button>
+                    </div>
+                  </AccordionContent>
+                </AccordionItem>
+              )}
+            </Accordion>
           </div>
         </CardContent>
-        <CardFooter className="border-t pt-4 pb-4 flex justify-between">
+        <CardFooter className="pt-4 pb-6 px-8 flex flex-col">
           {order.confirmed ? (
-            <Badge className="px-3 py-1 bg-green-500 text-white">
-              Order Confirmed
-            </Badge>
+            <div className="w-full bg-gradient-to-br from-gray-100 to-gray-50 dark:from-gray-800 dark:to-gray-850 border border-gray-200 dark:border-gray-700 rounded-xl p-8 text-center animate-fadeIn shadow-consistent relative overflow-hidden">
+              <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_20%,rgba(255,255,255,0.1)_0%,rgba(0,0,0,0)_70%)] opacity-50 pointer-events-none"></div>
+              <div className="relative z-10">
+                <div className="inline-flex items-center justify-center w-14 h-14 rounded-full bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 mb-4">
+                  <Check className="w-7 h-7" />
+                </div>
+                <h3 className="text-2xl font-medium text-gray-800 dark:text-gray-200 mb-2">
+                  Order Confirmed!
+                </h3>
+                <p className="text-gray-700 dark:text-gray-300 mb-6 max-w-sm mx-auto">
+                  Your order has been successfully placed and a confirmation
+                  will be sent to you.
+                </p>
+                <Button
+                  onClick={() => window.location.reload()}
+                  className="bg-gradient-to-r from-gray-700 to-gray-600 hover:from-gray-600 hover:to-gray-500 text-white border-0 px-6 py-3 shadow-consistent hover:translate-y-[-2px] transition-all duration-200"
+                >
+                  Place Another Order
+                </Button>
+              </div>
+            </div>
           ) : (
-            <span className="text-sm text-gray-500">
-              {order.currentStep === "customer"
-                ? "Tell us your name or account code"
-                : order.currentStep === "deliveryDate"
-                ? "Tell us your preferred delivery date"
-                : order.currentStep === "products"
-                ? "Let us know which products you'd like to order"
-                : connection
-                ? "Speak clearly into your microphone"
-                : "Start the order process to begin"}
-            </span>
-          )}
-
-          {connection && (
-            <Button
-              onClick={() =>
-                sendUserMessage("I need to finish this order now.")
-              }
-              variant="outline"
-              disabled={order.confirmed}
-            >
-              <Send className="mr-2 h-4 w-4" />
-              Finish Order
-            </Button>
+            <div className="text-center text-white text-sm bg-gray-700 border border-gray-200 dark:border-gray-700/50 rounded-md py-3 px-5 shadow-sm">
+              {order.currentStep === "idle" ? (
+                "Start the order process to begin"
+              ) : (
+                <>
+                  {order.currentStep === "customer" &&
+                    "Please provide customer name and account details"}
+                  {order.currentStep === "deliveryDate" &&
+                    "Please specify the delivery date"}
+                  {order.currentStep === "products" &&
+                    "Please add products to your order"}
+                  {order.currentStep === "confirmation" &&
+                    "Please confirm your order to complete the process"}
+                </>
+              )}
+            </div>
           )}
         </CardFooter>
       </Card>
