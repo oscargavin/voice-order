@@ -8,35 +8,66 @@ function generateDateResponse(callerInfo = {}) {
   // Get current date information
   const now = new Date();
   
-  // Format today's date in ISO format (YYYY-MM-DD)
-  const today = now.toISOString().split('T')[0];
-  
-  // Get day of week
+  // Get day of week and month names
   const dayOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][now.getDay()];
   const monthName = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 
                     'August', 'September', 'October', 'November', 'December'][now.getMonth()];
   
-  // Create a human-readable date for the prompt
-  const formattedDate = `${dayOfWeek}, ${monthName} ${now.getDate()}, ${now.getFullYear()}`;
+  // Format today's readable date with ordinal suffix for the day
+  const getDaySuffix = (day: number) => {
+    if (day > 3 && day < 21) return 'th';
+    switch (day % 10) {
+      case 1: return 'st';
+      case 2: return 'nd';
+      case 3: return 'rd';
+      default: return 'th';
+    }
+  };
   
-  // Calculate tomorrow and its day of the week
+  const todayDate = now.getDate();
+  const todaySuffix = getDaySuffix(todayDate);
+  const todayFormatted = `${dayOfWeek}, ${monthName} ${todayDate}${todaySuffix}, ${now.getFullYear()}`;
+  
+  // Calculate tomorrow's date
   const tomorrow = new Date(now);
   tomorrow.setDate(tomorrow.getDate() + 1);
-  const tomorrowDayOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][tomorrow.getDay()];
-  const tomorrowFormatted = tomorrow.toISOString().split('T')[0];
   
-  // Create response with expanded date variables
+  // Format tomorrow's readable date
+  const tomorrowDayOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][tomorrow.getDay()];
+  const tomorrowMonth = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 
+                        'August', 'September', 'October', 'November', 'December'][tomorrow.getMonth()];
+  const tomorrowDate = tomorrow.getDate();
+  const tomorrowSuffix = getDaySuffix(tomorrowDate);
+  const tomorrowFormatted = `${tomorrowDayOfWeek}, ${tomorrowMonth} ${tomorrowDate}${tomorrowSuffix}, ${tomorrow.getFullYear()}`;
+  
+  // For variable substitution (in ISO format)
+  const todayISO = now.toISOString().split('T')[0];
+  const tomorrowISO = tomorrow.toISOString().split('T')[0];
+  
+  // Create response with dynamic variables
   return {
     "dynamic_variables": {
-      "today": today,
-      "day_of_week": dayOfWeek,
-      "tomorrow": tomorrowFormatted,
-      "tomorrow_day": tomorrowDayOfWeek
+      // Date information in various formats
+      "today_iso": todayISO,
+      "today_day": dayOfWeek,
+      "today_date": `${monthName} ${todayDate}${todaySuffix}`,
+      "today_full": todayFormatted,
+      
+      "tomorrow_iso": tomorrowISO,
+      "tomorrow_day": tomorrowDayOfWeek,
+      "tomorrow_date": `${tomorrowMonth} ${tomorrowDate}${tomorrowSuffix}`,
+      "tomorrow_full": tomorrowFormatted,
+      
+      // Current year
+      "current_year": now.getFullYear().toString(),
+      
+      // Any caller info passed in
+      ...callerInfo
     },
     "conversation_config_override": {
       "agent": {
         "prompt": {
-          "prompt": `Today is ${formattedDate} and tomorrow is ${tomorrowDayOfWeek}, ${monthName} ${tomorrow.getDate()}, ${tomorrow.getFullYear()}. Use this information when discussing delivery dates with the customer.`
+          "prompt": `Today is ${todayFormatted} and tomorrow is ${tomorrowFormatted}. When discussing dates with customers, always use these exact dates rather than placeholder variables. For example, if a customer asks for delivery "tomorrow", confirm with "So that's ${tomorrowFormatted}" rather than using variable placeholders.`
         }
       }
     }
@@ -46,10 +77,13 @@ function generateDateResponse(callerInfo = {}) {
 // Handle GET requests (no body parameters)
 export async function GET(request: NextRequest) {
   try {
-    console.log('GET webhook called');
+    console.log('GET webhook called for date information');
     
     // Generate response with date information
     const response = generateDateResponse();
+    
+    // Log the dynamic variables provided for debugging
+    console.log('Providing dynamic variables:', Object.keys(response.dynamic_variables));
     
     return NextResponse.json(response);
   } catch (error) {
@@ -71,13 +105,16 @@ export async function POST(request: NextRequest) {
       const body = await request.json();
       const { caller_id, agent_id, called_number, call_sid } = body;
       callerInfo = { caller_id, agent_id, called_number, call_sid };
-      console.log('POST webhook called with:', callerInfo);
+      console.log('POST webhook called with caller info:', callerInfo);
     } catch (e) {
       console.log('POST webhook called with no body or invalid JSON');
     }
     
     // Generate response with date information
     const response = generateDateResponse(callerInfo);
+    
+    // Log the dynamic variables provided for debugging
+    console.log('Providing dynamic variables:', Object.keys(response.dynamic_variables));
     
     return NextResponse.json(response);
   } catch (error) {
