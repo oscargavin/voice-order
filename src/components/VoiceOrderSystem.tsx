@@ -16,6 +16,12 @@ import {
   XCircle,
   Loader2,
 } from "lucide-react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 // Define the conversation message type
 interface ConversationMessage {
@@ -798,9 +804,21 @@ Output:
             <span className="font-medium text-gray-700">
               Need help? Call us at
             </span>
-            <span className="font-bold text-blue-600">
-              0118 999 881 999 119 7253
-            </span>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="font-bold text-blue-600 cursor-help">
+                    0118 999 881 999 119 7253
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent className="max-w-xs">
+                  <p>
+                    "It's easy to remember! Just sing the song: 0118 999 881 999
+                    119 725... 3!"
+                  </p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           </div>
         </div>
       </nav>
