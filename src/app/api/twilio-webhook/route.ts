@@ -11,7 +11,7 @@ function generateDateResponse(callerInfo = {}) {
   // Format today's date in ISO format (YYYY-MM-DD)
   const today = now.toISOString().split('T')[0];
   
-  // Get day of week for reference in the prompt
+  // Get day of week
   const dayOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][now.getDay()];
   const monthName = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 
                     'August', 'September', 'October', 'November', 'December'][now.getMonth()];
@@ -19,15 +19,24 @@ function generateDateResponse(callerInfo = {}) {
   // Create a human-readable date for the prompt
   const formattedDate = `${dayOfWeek}, ${monthName} ${now.getDate()}, ${now.getFullYear()}`;
   
-  // Create response with only today's date as a dynamic variable
+  // Calculate tomorrow and its day of the week
+  const tomorrow = new Date(now);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const tomorrowDayOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][tomorrow.getDay()];
+  const tomorrowFormatted = tomorrow.toISOString().split('T')[0];
+  
+  // Create response with expanded date variables
   return {
     "dynamic_variables": {
-      "today": today
+      "today": today,
+      "day_of_week": dayOfWeek,
+      "tomorrow": tomorrowFormatted,
+      "tomorrow_day": tomorrowDayOfWeek
     },
     "conversation_config_override": {
       "agent": {
         "prompt": {
-          "prompt": `Today is ${formattedDate}. Use this information when discussing delivery dates with the customer.`
+          "prompt": `Today is ${formattedDate} and tomorrow is ${tomorrowDayOfWeek}, ${monthName} ${tomorrow.getDate()}, ${tomorrow.getFullYear()}. Use this information when discussing delivery dates with the customer.`
         }
       }
     }
