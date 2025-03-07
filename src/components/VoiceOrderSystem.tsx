@@ -588,6 +588,28 @@ Output:
     { "name": "Orange Juice", "quantity": 2, "unit": "bottles" }
   ]
 }
+
+Example 3:
+Conversation:
+User: Good morning, I'm calling from Abbotsfield Hotel & Spa. We need to place our weekly delivery for next Thursday, the 12th.
+Assistant: Good morning! I'd be happy to help with your weekly delivery for Abbotsfield Hotel & Spa for Thursday, the 12th. What items do you need?
+User: We need 10 kg of rice, 5 kg of chicken breasts, 3 cases of bottled water, and 20 avocados.
+Assistant: I have 10 kg of rice, 5 kg of chicken breasts, 3 cases of bottled water, and 20 avocados. Is there anything else for your delivery?
+User: Yes, please add 2 kg of coffee beans as well.
+Assistant: Added 2 kg of coffee beans. Your order for Abbotsfield Hotel & Spa now includes 10 kg of rice, 5 kg of chicken breasts, 3 cases of bottled water, 20 avocados, and 2 kg of coffee beans for delivery on Thursday the 12th.
+
+Output:
+{
+  "customerName": "Abbotsfield Hotel & Spa",
+  "deliveryDate": "12/07/2023",
+  "products": [
+    { "name": "Rice", "quantity": 10, "unit": "kg" },
+    { "name": "Chicken Breasts", "quantity": 5, "unit": "kg" },
+    { "name": "Bottled Water", "quantity": 3, "unit": "cases" },
+    { "name": "Avocados", "quantity": 20, "unit": "pieces" },
+    { "name": "Coffee Beans", "quantity": 2, "unit": "kg" }
+  ]
+}
 `;
 
       // Call OpenAI API
@@ -687,7 +709,28 @@ Output:
       }
 
       try {
-        const orderData = JSON.parse(result.choices[0].message.content.trim());
+        const responseContent = result.choices[0].message.content.trim();
+
+        // Try to extract JSON content if there are additional characters
+        let jsonContent = responseContent;
+
+        // Check if the content starts with a code block marker
+        if (responseContent.includes("```json")) {
+          // Extract content between ```json and ``` markers
+          const jsonMatch = responseContent.match(/```json\s*([\s\S]*?)\s*```/);
+          if (jsonMatch && jsonMatch[1]) {
+            jsonContent = jsonMatch[1].trim();
+          }
+        } else if (responseContent.includes("```")) {
+          // Extract content between ``` and ``` markers (generic code block)
+          const jsonMatch = responseContent.match(/```\s*([\s\S]*?)\s*```/);
+          if (jsonMatch && jsonMatch[1]) {
+            jsonContent = jsonMatch[1].trim();
+          }
+        }
+
+        console.log("Extracted JSON content:", jsonContent);
+        const orderData = JSON.parse(jsonContent);
 
         // Create a new processed order
         const newOrder: ProcessedOrder = {
@@ -1230,7 +1273,7 @@ Output:
       <footer className="w-full py-4 bg-gradient-to-t from-gray-50 to-white border-t border-gray-100 mt-auto">
         <div className="container mx-auto max-w-7xl px-4">
           <div className="text-center text-sm text-gray-600">
-            © 2024 OpenInfo Foodservice. All rights reserved.
+            © 2025 OpenInfo Foodservice. All rights reserved.
           </div>
           <div className="text-center text-xs text-gray-400 mt-1">
             Powered by ElevenLabs Conversational AI
@@ -1241,118 +1284,14 @@ Output:
       {/* Voice assistant widget */}
       <div
         className="elevenlabs-widget-container"
-        aria-label="Voice assistant"
-        role="complementary"
         dangerouslySetInnerHTML={{
           __html: `<elevenlabs-convai 
             agent-id="${
               process.env.ELEVENLABS_AGENT_ID || "O9eDVur3VAuMyoTOPKN7"
             }"
-            data-loading="eager"
-            data-timeout="30000"
-            data-retry="true"
-            data-debug="true"
-            data-delay="1000"
-            data-xi-api-key="${
-              process.env.NEXT_PUBLIC_ELEVENLABS_API_KEY || ""
-            }"
           ></elevenlabs-convai>`,
         }}
       />
-
-      {/* Script to retry loading the widget if it fails */}
-      <Script
-        id="widget-retry"
-        strategy="afterInteractive"
-        dangerouslySetInnerHTML={{
-          __html: `
-            let retryAttempts = 0;
-            const maxRetries = 5;
-            
-            // Function to handle widget errors
-            function handleWidgetError(event) {
-              if (
-                (event.message && event.message.includes('ConversationalAI')) || 
-                (event.error && event.error.message && event.error.message.includes('ConversationalAI'))
-              ) {
-                console.log('Widget error detected:', event);
-                
-                if (retryAttempts < maxRetries) {
-                  retryAttempts++;
-                  console.log('Attempting to reload widget... (Attempt ' + retryAttempts + '/' + maxRetries + ')');
-                  
-                  // Delay increases with each retry
-                  const delay = retryAttempts * 2000;
-                  
-                  setTimeout(() => {
-                    try {
-                      const container = document.querySelector('.elevenlabs-widget-container');
-                      if (container) {
-                        const widget = container.querySelector('elevenlabs-convai');
-                        if (widget) {
-                          // Remove and recreate element
-                          widget.remove();
-                          
-                          // Short pause before recreating
-                          setTimeout(() => {
-                            const newWidget = document.createElement('elevenlabs-convai');
-                            newWidget.setAttribute('agent-id', '${
-                              process.env.ELEVENLABS_AGENT_ID ||
-                              "O9eDVur3VAuMyoTOPKN7"
-                            }');
-                            newWidget.setAttribute('data-loading', 'eager');
-                            newWidget.setAttribute('data-timeout', '30000');
-                            newWidget.setAttribute('data-retry', 'true');
-                            newWidget.setAttribute('data-debug', 'true');
-                            newWidget.setAttribute('data-delay', '1000');
-                            newWidget.setAttribute('data-xi-api-key', '${
-                              process.env.NEXT_PUBLIC_ELEVENLABS_API_KEY || ""
-                            }');
-                            container.appendChild(newWidget);
-                            
-                            console.log('Widget recreated with attempt ' + retryAttempts);
-                          }, 500);
-                        }
-                      }
-                    } catch (e) {
-                      console.error('Error during widget recreation:', e);
-                    }
-                  }, delay);
-                } else {
-                  console.log('Maximum retry attempts reached. Widget could not be loaded.');
-                }
-              }
-            }
-            
-            // Add error event listeners
-            window.addEventListener('error', handleWidgetError);
-            window.addEventListener('unhandledrejection', function(event) {
-              if (event.reason && event.reason.message && event.reason.message.includes('ConversationalAI')) {
-                handleWidgetError({ message: event.reason.message, error: event.reason });
-              }
-            });
-          `,
-        }}
-      />
-
-      {/* Add some CSS for widget positioning */}
-      <style jsx global>{`
-        /* Ensure widget doesn't overlap with footer */
-        .elevenlabs-widget-container {
-          position: relative;
-          z-index: 10;
-        }
-
-        /* Fix any overflow scroll issues */
-        [class*="scrollable-container"] {
-          overscroll-behavior: contain;
-        }
-
-        /* Improve contrast for any white text */
-        [class*="text-white"] {
-          text-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
-        }
-      `}</style>
 
       {/* Processing Modal */}
       <ProcessingModal
