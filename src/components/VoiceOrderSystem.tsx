@@ -847,21 +847,9 @@ Output:
             <span className="font-medium text-gray-700">
               Need help? Call us at
             </span>
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span className="font-bold text-blue-600 cursor-help">
-                    0118 999 881 999 119 7253
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent className="max-w-xs">
-                  <p>
-                    "It's easy to remember! Just sing the song: 0118 999 881 999
-                    119 725... 3!"
-                  </p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
+            <span className="font-bold text-blue-600 cursor-help">
+              +44 333 188 0332
+            </span>
           </div>
         </div>
       </nav>
