@@ -15,8 +15,6 @@ import {
   CheckCircle,
   XCircle,
   Loader2,
-  Mic,
-  AlertCircle,
 } from "lucide-react";
 
 // Define the conversation message type
@@ -800,7 +798,9 @@ Output:
             <span className="font-medium text-gray-700">
               Need help? Call us at
             </span>
-            <span className="font-bold text-blue-600">0800 1111</span>
+            <span className="font-bold text-blue-600">
+              0118 999 881 999 119 7253
+            </span>
           </div>
         </div>
       </nav>
@@ -1114,48 +1114,30 @@ Output:
           {/* Quick Tips */}
           <div className="md:col-span-4 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-2xl p-4 border border-blue-100 shadow-lg">
             <div className="flex items-center space-x-3 mb-4">
-              <Mic className="w-5 h-5 text-blue-600" />
+              <Info className="w-5 h-5 text-blue-600" />
               <h3 className="text-lg font-semibold text-gray-900">
-                Voice Assistant
+                Quick Tips
               </h3>
             </div>
-            <div
-              className="elevenlabs-widget-container-card"
-              aria-label="Voice assistant"
-              role="complementary"
-            >
-              {widgetError ? (
-                <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex flex-col items-center justify-center text-center">
-                  <AlertCircle className="w-8 h-8 text-red-500 mb-2" />
-                  <h4 className="text-red-700 font-semibold">Widget Error</h4>
-                  <p className="text-sm text-red-600 mt-1">{widgetError}</p>
-                  <button
-                    onClick={() => setWidgetError(null)}
-                    className="mt-3 px-3 py-1.5 bg-red-100 text-red-700 rounded-lg text-sm font-medium hover:bg-red-200 transition-colors"
-                  >
-                    Retry
-                  </button>
-                </div>
-              ) : (
-                <div
-                  dangerouslySetInnerHTML={{
-                    __html: `<elevenlabs-convai 
-                      agent-id="${
-                        process.env.ELEVENLABS_AGENT_ID ||
-                        "O9eDVur3VAuMyoTOPKN7"
-                      }"
-                      data-loading="eager"
-                      data-timeout="30000"
-                      data-retry="true"
-                      data-debug="true"
-                      data-delay="1000"
-                      data-xi-api-key="${
-                        process.env.NEXT_PUBLIC_ELEVENLABS_API_KEY || ""
-                      }"
-                    ></elevenlabs-convai>`,
-                  }}
-                />
-              )}
+            <div className="grid grid-cols-1 gap-3">
+              <div className="flex items-center bg-white/80 rounded-xl p-3 shadow-sm border border-blue-100/50">
+                <span className="w-2 h-2 rounded-full bg-blue-500 mr-4 flex-shrink-0"></span>
+                <p className="text-gray-700 text-sm">
+                  Start by saying your name or account number
+                </p>
+              </div>
+              <div className="flex items-center bg-white/80 rounded-xl p-3 shadow-sm border border-blue-100/50">
+                <span className="w-2 h-2 rounded-full bg-blue-500 mr-4 flex-shrink-0"></span>
+                <p className="text-gray-700 text-sm">
+                  Specify your desired delivery date
+                </p>
+              </div>
+              <div className="flex items-center bg-white/80 rounded-xl p-3 shadow-sm border border-blue-100/50">
+                <span className="w-2 h-2 rounded-full bg-blue-500 mr-4 flex-shrink-0"></span>
+                <p className="text-gray-700 text-sm">
+                  List the products and quantities you need
+                </p>
+              </div>
             </div>
           </div>
 
@@ -1337,32 +1319,20 @@ Output:
 
       {/* Add some CSS for widget positioning */}
       <style jsx global>{`
-        /* Style for widget in the bento card */
-        .elevenlabs-widget-container-card {
-          position: relative;
-          height: 320px;
-          width: 100%;
-          overflow: hidden;
-        }
-
-        /* Style the widget orb inside the card */
-        .elevenlabs-widget-container-card elevenlabs-convai {
-          --convai-orb-size: 50px;
-          --convai-accent-color: #3b82f6;
-          --convai-chat-width: 100%;
-          --convai-chat-height: 100%;
-          width: 100%;
-          height: 100%;
-        }
-
-        /* Hide the original widget container */
+        /* Ensure widget doesn't overlap with footer */
         .elevenlabs-widget-container {
-          display: none;
+          position: relative;
+          z-index: 10;
         }
 
         /* Fix any overflow scroll issues */
         [class*="scrollable-container"] {
           overscroll-behavior: contain;
+        }
+
+        /* Improve contrast for any white text */
+        [class*="text-white"] {
+          text-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
         }
       `}</style>
 
