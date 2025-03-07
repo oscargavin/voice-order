@@ -847,9 +847,24 @@ Output:
             <span className="font-medium text-gray-700">
               Need help? Call us at
             </span>
-            <span className="font-bold text-blue-600 cursor-help">
-              +44 333 188 0332
-            </span>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <a
+                    href="tel:+443331880332"
+                    className="font-bold text-blue-600 hover:text-blue-800 transition-colors cursor-help md:cursor-help"
+                  >
+                    +44 333 188 0332
+                  </a>
+                </TooltipTrigger>
+                <TooltipContent className="max-w-xs">
+                  <p>
+                    Tap to call on mobile devices. Our support team is available
+                    24/7.
+                  </p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           </div>
         </div>
       </nav>
