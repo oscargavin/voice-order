@@ -831,40 +831,70 @@ Output:
 
       {/* Nav */}
       <nav className="w-full py-4 px-4 bg-white shadow-sm border-b border-gray-100 sticky top-0 z-50">
-        <div className="container mx-auto max-w-7xl flex items-center justify-between">
-          <div className="flex items-center space-x-8">
-            <div>
+        <div className="container mx-auto max-w-7xl">
+          {/* Mobile layout */}
+          <div className="md:hidden flex flex-col space-y-2">
+            <div className="flex items-center justify-between">
               <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
                 Open Info
               </h1>
+              <a
+                href="tel:+443331880332"
+                className="flex items-center text-blue-600 hover:text-blue-700 transition-colors bg-blue-50 px-3 py-1.5 rounded-full"
+              >
+                <Phone className="w-4 h-4 mr-1.5" />
+                <span className="font-medium">Call Us</span>
+              </a>
+            </div>
+            <div className="flex justify-between items-center">
               <p className="text-sm text-gray-600 font-medium">
                 Voice Order Assistant
               </p>
+              <a
+                href="tel:+443331880332"
+                className="text-sm text-blue-600 font-semibold"
+              >
+                +44 333 188 0332
+              </a>
             </div>
           </div>
-          <div className="flex items-center space-x-2 text-sm">
-            <Phone className="w-4 h-4 text-blue-600" />
-            <span className="font-medium text-gray-700">
-              Need help? Call us at
-            </span>
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <a
-                    href="tel:+443331880332"
-                    className="font-bold text-blue-600 hover:text-blue-800 transition-colors cursor-help md:cursor-help"
-                  >
-                    +44 333 188 0332
-                  </a>
-                </TooltipTrigger>
-                <TooltipContent className="max-w-xs">
-                  <p>
-                    Tap to call on mobile devices. Our support team is available
-                    24/7.
-                  </p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
+
+          {/* Desktop layout - unchanged */}
+          <div className="hidden md:flex items-center justify-between">
+            <div className="flex items-center space-x-8">
+              <div>
+                <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
+                  Open Info
+                </h1>
+                <p className="text-sm text-gray-600 font-medium">
+                  Voice Order Assistant
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center space-x-2 text-sm">
+              <Phone className="w-4 h-4 text-blue-600" />
+              <span className="font-medium text-gray-700">
+                Need help? Call us at
+              </span>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <a
+                      href="tel:+443331880332"
+                      className="font-bold text-blue-600 hover:text-blue-800 transition-colors"
+                    >
+                      +44 333 188 0332
+                    </a>
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-xs">
+                    <p>
+                      Tap to call on mobile devices. Our support team is
+                      available 24/7.
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </div>
           </div>
         </div>
       </nav>
